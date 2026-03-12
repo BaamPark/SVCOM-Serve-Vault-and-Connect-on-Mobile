@@ -1,0 +1,271 @@
+:root {
+  color-scheme: light;
+  --bg: #f5f1e8;
+  --paper: #fffdf8;
+  --ink: #1f1d1a;
+  --muted: #6a645c;
+  --line: #d8cebf;
+  --accent: #1c6e5c;
+  --accent-soft: #e0f0ea;
+  --danger: #a43c30;
+  --shadow: 0 14px 40px rgba(35, 28, 18, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(28, 110, 92, 0.15), transparent 28%),
+    linear-gradient(180deg, #f7f1e6 0%, #efe5d4 100%);
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: #fff;
+  border-radius: 999px;
+  padding: 0.65rem 1rem;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--ink);
+}
+
+button.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: transparent;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 0.85rem 1rem;
+  background: #fff;
+  color: var(--ink);
+}
+
+textarea {
+  min-height: 48vh;
+  resize: vertical;
+  line-height: 1.55;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.login-screen,
+.main-screen {
+  min-height: 100vh;
+}
+
+.login-screen {
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+
+.card {
+  background: var(--paper);
+  border: 1px solid rgba(93, 74, 48, 0.12);
+  border-radius: 24px;
+  box-shadow: var(--shadow);
+}
+
+.login-card {
+  width: min(100%, 420px);
+  padding: 1.5rem;
+}
+
+.main-screen {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+}
+
+.topbar {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.topbar h1,
+.editor h2,
+.preview h2 {
+  margin: 0;
+}
+
+.topbar p,
+.muted {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+}
+
+.topbar-actions,
+.editor-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.sidebar {
+  padding: 1rem;
+  overflow: auto;
+}
+
+.workspace {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 0;
+}
+
+.editor,
+.preview {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.editor {
+  padding: 1rem;
+}
+
+.preview {
+  overflow: hidden;
+}
+
+.editor-toolbar,
+.preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding-bottom: 0.75rem;
+}
+
+.notes-tree {
+  margin-top: 1rem;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.tree-folder-label,
+.tree-note {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 12px;
+  padding: 0.55rem 0.7rem;
+  background: transparent;
+  color: var(--ink);
+}
+
+.tree-folder {
+  margin-left: 0.4rem;
+  border-left: 1px solid var(--line);
+  padding-left: 0.6rem;
+}
+
+.tree-note.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.search-results {
+  margin-top: 0.75rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.search-result {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 0.8rem;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.search-result button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--ink);
+  border: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+.search-result p {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.preview-output {
+  flex: 1;
+  overflow: auto;
+  padding: 1rem;
+  border-top: 1px solid var(--line);
+  line-height: 1.65;
+}
+
+.preview-output a {
+  color: var(--accent);
+}
+
+.preview-output pre {
+  overflow: auto;
+  padding: 0.85rem;
+  border-radius: 16px;
+  background: #f2ede3;
+}
+
+.preview-output blockquote {
+  border-left: 4px solid var(--line);
+  margin: 1rem 0;
+  padding-left: 1rem;
+  color: var(--muted);
+}
+
+.stack {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.error-text {
+  color: var(--danger);
+}
+
+@media (max-width: 980px) {
+  .main-screen {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  textarea {
+    min-height: 32vh;
+  }
+}
