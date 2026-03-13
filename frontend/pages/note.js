@@ -187,6 +187,26 @@ function normalizeLinkTargets(rootElement) {
   });
 }
 
+function normalizeInlineCaretBoundaries(rootElement) {
+  const inlineSelector = "strong, b, em, i, mark, del, s, strike, a, code";
+  rootElement.querySelectorAll(inlineSelector).forEach((element) => {
+    if (element.tagName === "CODE" && element.closest("pre")) {
+      return;
+    }
+
+    const nextSibling = element.nextSibling;
+    if (
+      nextSibling &&
+      nextSibling.nodeType === Node.TEXT_NODE &&
+      (nextSibling.textContent || "").startsWith("\u200b")
+    ) {
+      return;
+    }
+
+    element.parentNode?.insertBefore(document.createTextNode("\u200b"), element.nextSibling);
+  });
+}
+
 function syncTaskItemState(taskItem) {
   if (!taskItem) {
     return;
@@ -829,6 +849,7 @@ export default function NotePage() {
   const dirtyRef = useRef(false);
   const eventSourceRef = useRef(null);
   const visualEditorRef = useRef(null);
+  const markdownEditorRef = useRef(null);
   const savedSelectionRef = useRef(null);
   const lastKeyboardInsetRef = useRef(0);
   const floatingDragRef = useRef({
@@ -856,6 +877,7 @@ export default function NotePage() {
     }
     editor.innerHTML = nextHtml || "<p></p>";
     normalizeLinkTargets(editor);
+    normalizeInlineCaretBoundaries(editor);
   }
 
   function saveEditorSelection() {
@@ -916,6 +938,22 @@ export default function NotePage() {
     return range;
   }
 
+  function closestInlineFormatAncestor(node) {
+    const editor = visualEditorRef.current;
+    let current = node?.nodeType === Node.TEXT_NODE ? node.parentNode : node;
+    while (current && current !== editor) {
+      if (
+        current.nodeType === Node.ELEMENT_NODE &&
+        ["STRONG", "B", "EM", "I", "MARK", "DEL", "S", "STRIKE", "CODE", "A"].includes(current.tagName) &&
+        !(current.tagName === "CODE" && current.closest("pre"))
+      ) {
+        return current;
+      }
+      current = current.parentNode;
+    }
+    return null;
+  }
+
   function wrapSelectionWithInlineTag(tagName) {
     if (editorMode !== "visual") {
       return false;
@@ -943,6 +981,54 @@ export default function NotePage() {
     if (selection) {
       const nextRange = document.createRange();
       nextRange.setStart(spacer, spacer.textContent.length);
+      nextRange.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(nextRange);
+      saveEditorSelection();
+    }
+
+    handleVisualInput();
+    setFloatingToolsOpen(false);
+    return true;
+  }
+
+  function unwrapSelectionFormatting() {
+    if (editorMode !== "visual") {
+      return false;
+    }
+    if (!ensureEditorSelection()) {
+      setFloatingToolsOpen(false);
+      return false;
+    }
+
+    const range = currentEditorRange();
+    if (!range || range.collapsed) {
+      setFloatingToolsOpen(false);
+      return false;
+    }
+
+    const plainText = range.toString();
+    const startAncestor = closestInlineFormatAncestor(range.startContainer);
+    const endAncestor = closestInlineFormatAncestor(range.endContainer);
+
+    let textNode;
+    if (
+      startAncestor &&
+      startAncestor === endAncestor &&
+      plainText === (startAncestor.textContent || "")
+    ) {
+      textNode = document.createTextNode(plainText);
+      startAncestor.parentNode.replaceChild(textNode, startAncestor);
+    } else {
+      range.deleteContents();
+      textNode = document.createTextNode(plainText);
+      range.insertNode(textNode);
+    }
+
+    const selection = window.getSelection();
+    if (selection) {
+      const nextRange = document.createRange();
+      nextRange.setStart(textNode, plainText.length);
       nextRange.collapse(true);
       selection.removeAllRanges();
       selection.addRange(nextRange);
@@ -1392,6 +1478,16 @@ export default function NotePage() {
     setSaveRevision((value) => value + 1);
   }
 
+  function runMarkdownHistoryCommand(command) {
+    const textarea = markdownEditorRef.current;
+    if (!textarea) {
+      return;
+    }
+
+    textarea.focus();
+    document.execCommand(command, false);
+  }
+
   function applyCommand(command, value) {
     if (editorMode !== "visual") {
       return;
@@ -1820,6 +1916,28 @@ export default function NotePage() {
           <div className="note-header-toprow">
             <Link href="/app" className="icon-button">Back</Link>
             <div className="note-header-actions">
+              {editorMode === "markdown" ? (
+                <>
+                  <button
+                    type="button"
+                    className="chip-button"
+                    onClick={() => runMarkdownHistoryCommand("undo")}
+                    aria-label="Undo"
+                    title="Undo"
+                  >
+                    ↩
+                  </button>
+                  <button
+                    type="button"
+                    className="chip-button"
+                    onClick={() => runMarkdownHistoryCommand("redo")}
+                    aria-label="Redo"
+                    title="Redo"
+                  >
+                    ↪
+                  </button>
+                </>
+              ) : null}
               <button
                 type="button"
                 className={editorMode === "visual" ? "chip-button active" : "chip-button"}
@@ -1885,6 +2003,7 @@ export default function NotePage() {
           />
           ) : (
             <textarea
+              ref={markdownEditorRef}
               className="markdown-editor-surface"
               value={rawMarkdownContent}
               onChange={handleMarkdownChange}
@@ -1933,6 +2052,9 @@ export default function NotePage() {
                 <button type="button" className="toolbar-button" aria-label="Bold" title="Bold" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("bold")}>
                   <span style={{ fontWeight: 700 }}>B</span>
                 </button>
+                <button type="button" className="toolbar-button" aria-label="Reformatter" title="Reformatter" onPointerDown={handleToolbarPointerDown} onClick={unwrapSelectionFormatting}>
+                  🧼
+                </button>
                 <button type="button" className="toolbar-button" aria-label="Highlight" title="Highlight" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("highlight")}>
                   🖍️
                 </button>
@@ -1944,9 +2066,6 @@ export default function NotePage() {
                 </button>
                 <button type="button" className="toolbar-button" aria-label="Code" title="Code" onPointerDown={handleToolbarPointerDown} onClick={insertInlineCode}>
                   {"</>"}
-                </button>
-                <button type="button" className="toolbar-button" aria-label="Quote" title="Quote" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("formatBlock", "<blockquote>")}>
-                  ❞
                 </button>
                 <button type="button" className="toolbar-button" aria-label="Heading 1" title="Heading 1" onPointerDown={handleToolbarPointerDown} onClick={() => applyHeadingCommand(1)}>
                   H1
