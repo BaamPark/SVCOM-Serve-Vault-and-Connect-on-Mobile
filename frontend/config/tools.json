@@ -1,0 +1,53 @@
+{
+  "mainTools": [
+    "bullet",
+    "ordered_list",
+    "checkbox",
+    "bold",
+    "reformat",
+    "highlight",
+    "code",
+    "divider",
+    "heading1",
+    "heading2",
+    "heading3",
+    "table"
+  ],
+  "tableTools": [
+    "table_add",
+    "row_add",
+    "column_add",
+    "row_delete",
+    "column_delete"
+  ],
+  "hiddenTools": [
+    "block",
+    "strikethrough",
+    "italic"
+  ],
+  "_reference": {
+    "note": "JSON does not support comments, so this section documents all available tool ids.",
+    "allTools": {
+      "bullet": "- ",
+      "ordered_list": "1. ",
+      "checkbox": "- [ ] ",
+      "divider": "---",
+      "table": "opens table tools submenu",
+      "bold": "**selected**",
+      "reformat": "remove inline formatting from selected text",
+      "highlight": "==selected==",
+      "strikethrough": "~~selected~~",
+      "italic": "*selected*",
+      "code": "`selected`",
+      "heading1": "# selected",
+      "heading2": "## selected",
+      "heading3": "### selected",
+      "table_add": "create 2x2 markdown table",
+      "row_add": "append row below current table row",
+      "column_add": "append column right of current table column",
+      "row_delete": "delete current table row",
+      "column_delete": "delete current table column",
+      "block": "```\\nselected\\n```"
+    }
+  }
+}

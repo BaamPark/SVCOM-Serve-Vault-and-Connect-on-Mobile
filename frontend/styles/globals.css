@@ -541,6 +541,12 @@ a {
   border-radius: 10px;
 }
 
+.visual-editor-surface hr {
+  border: none;
+  border-top: 1px solid rgba(0, 0, 0, 0.14);
+  margin: 1.1rem 0;
+}
+
 .visual-editor-surface pre {
   padding: 0.85rem;
   overflow: auto;

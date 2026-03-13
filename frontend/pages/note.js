@@ -2,6 +2,7 @@ import Head from "next/head";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import { useEffect, useRef, useState } from "react";
+import toolConfig from "../config/tools.json";
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -50,6 +51,22 @@ function escapeHtml(value) {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+}
+
+function resolveVisibleToolIds(preferredIds, hiddenIds, registry) {
+  const hidden = new Set(hiddenIds || []);
+  const seen = new Set();
+  const result = [];
+
+  for (const toolId of preferredIds || []) {
+    if (hidden.has(toolId) || seen.has(toolId) || !registry[toolId]) {
+      continue;
+    }
+    seen.add(toolId);
+    result.push(toolId);
+  }
+
+  return result;
 }
 
 function serializeInline(node) {
@@ -160,6 +177,8 @@ function serializeBlock(node) {
       const code = element.textContent || "";
       return `\`\`\`\n${code.replace(/\n$/, "")}\n\`\`\`\n\n`;
     }
+    case "HR":
+      return `---\n\n`;
     case "TABLE": {
       const rows = Array.from(element.querySelectorAll("tr"));
       if (rows.length === 0) {
@@ -382,10 +401,18 @@ function parseFrontmatter(markdown) {
     return { properties: [], body: normalized };
   }
 
+  const frontmatterLines = lines.slice(1, endIndex);
+  const hasPropertyLine = frontmatterLines.some((line) =>
+    /^([A-Za-z0-9_-]+):\s*(.*)$/.test(line)
+  );
+  if (!hasPropertyLine) {
+    return { properties: [], body: normalized };
+  }
+
   const properties = [];
   let currentListProperty = null;
 
-  for (const line of lines.slice(1, endIndex)) {
+  for (const line of frontmatterLines) {
     const listMatch = line.match(/^\s*-\s+(.*)$/);
     if (listMatch && currentListProperty) {
       currentListProperty.items.push(listMatch[1].trim());
@@ -581,6 +608,13 @@ function renderMarkdownBodyToHtml(markdown) {
     if (!line.trim()) {
       flushParagraph();
       closeList();
+      continue;
+    }
+
+    if (/^\s*---\s*$/.test(line)) {
+      flushParagraph();
+      closeList();
+      output.push("<hr>");
       continue;
     }
 
@@ -2082,6 +2116,35 @@ export default function NotePage() {
     setFloatingToolsOpen(false);
   }
 
+  function insertHorizontalRuleAtEmptyLine() {
+    if (editorMode !== "visual" || !visualEditorRef.current) {
+      return;
+    }
+    if (!ensureEditorSelection()) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const editor = visualEditorRef.current;
+    const currentBlock = currentBlockElement(editor);
+    if (!currentBlock || !isEffectivelyEmptyBlock(currentBlock)) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    const rule = document.createElement("hr");
+    const paragraph = document.createElement("p");
+    paragraph.appendChild(document.createElement("br"));
+    fragment.appendChild(rule);
+    fragment.appendChild(paragraph);
+
+    currentBlock.parentNode?.replaceChild(fragment, currentBlock);
+    placeCaretAtStart(paragraph);
+    handleVisualInput();
+    setFloatingToolsOpen(false);
+  }
+
   function appendTableRowBelow() {
     if (editorMode !== "visual" || !visualEditorRef.current) {
       return;
@@ -2491,6 +2554,153 @@ export default function NotePage() {
     ? Math.max(16, floatingPosition.top - 12 - 80)
     : floatingPosition.top + floatingButtonSize + 12;
 
+  const toolRegistry = {
+    bullet: {
+      label: "List",
+      title: "List",
+      onClick: insertBullet,
+      icon: <img src="/svg/bullet.svg" alt="" aria-hidden="true" width="18" height="18" />
+    },
+    ordered_list: {
+      label: "Ordered list",
+      title: "Ordered list",
+      onClick: insertOrderedList,
+      icon: <img src="/svg/ordered_list.svg" alt="" aria-hidden="true" width="18" height="18" />
+    },
+    checkbox: {
+      label: "Checkbox",
+      title: "Checkbox",
+      onClick: insertCheckbox,
+      icon: <img src="/svg/checkbox.svg" alt="" aria-hidden="true" width="18" height="18" />
+    },
+    divider: {
+      label: "Divider",
+      title: "Divider",
+      onClick: insertHorizontalRuleAtEmptyLine,
+      icon: <img src="/svg/divider.svg" alt="" aria-hidden="true" width="18" height="18" />
+    },
+    table: {
+      label: "Table tools",
+      title: "Table tools",
+      onClick: () => setTableToolsOpen(true),
+      icon: <img src="/svg/table.svg" alt="" aria-hidden="true" width="18" height="18" />
+    },
+    bold: {
+      label: "Bold",
+      title: "Bold",
+      onClick: () => applyCommand("bold"),
+      icon: <img src="/svg/bold.svg" alt="" aria-hidden="true" width="18" height="18" />
+    },
+    reformat: {
+      label: "Reformatter",
+      title: "Reformatter",
+      onClick: unwrapSelectionFormatting,
+      icon: <img src="/svg/reformat.svg" alt="" aria-hidden="true" width="18" height="18" />
+    },
+    highlight: {
+      label: "Highlight",
+      title: "Highlight",
+      onClick: () => applyCommand("highlight"),
+      icon: <img src="/svg/highlight.svg" alt="" aria-hidden="true" width="18" height="18" />
+    },
+    strikethrough: {
+      label: "Strikethrough",
+      title: "Strikethrough",
+      onClick: () => applyCommand("strikeThrough"),
+      icon: <img src="/svg/strikethrough.svg" alt="" aria-hidden="true" width="18" height="18" />
+    },
+    italic: {
+      label: "Italic",
+      title: "Italic",
+      onClick: () => applyCommand("italic"),
+      icon: <img src="/svg/italic.svg" alt="" aria-hidden="true" width="18" height="18" />
+    },
+    code: {
+      label: "Code",
+      title: "Code",
+      onClick: insertInlineCode,
+      icon: <img src="/svg/code.svg" alt="" aria-hidden="true" width="18" height="18" />
+    },
+    heading1: {
+      label: "Heading 1",
+      title: "Heading 1",
+      onClick: () => applyHeadingCommand(1),
+      icon: <img src="/svg/heading1.svg" alt="" aria-hidden="true" width="18" height="18" />
+    },
+    heading2: {
+      label: "Heading 2",
+      title: "Heading 2",
+      onClick: () => applyHeadingCommand(2),
+      icon: <img src="/svg/heading2.svg" alt="" aria-hidden="true" width="18" height="18" />
+    },
+    heading3: {
+      label: "Heading 3",
+      title: "Heading 3",
+      onClick: () => applyHeadingCommand(3),
+      icon: <img src="/svg/heading3.svg" alt="" aria-hidden="true" width="18" height="18" />
+    },
+    table_add: {
+      label: "Create table",
+      title: "Create table",
+      onClick: createTableAtEmptyLine,
+      icon: <img src="/svg/table_add.svg" alt="" aria-hidden="true" width="18" height="18" />
+    },
+    row_add: {
+      label: "Append row below",
+      title: "Append row below",
+      onClick: appendTableRowBelow,
+      icon: <img src="/svg/row_add.svg" alt="" aria-hidden="true" width="18" height="18" />
+    },
+    column_add: {
+      label: "Append column right",
+      title: "Append column right",
+      onClick: appendTableColumnRight,
+      icon: <img src="/svg/column_add.svg" alt="" aria-hidden="true" width="18" height="18" />
+    },
+    row_delete: {
+      label: "Delete current row",
+      title: "Delete current row",
+      onClick: deleteCurrentTableRow,
+      icon: <img src="/svg/row_delete.svg" alt="" aria-hidden="true" width="18" height="18" />
+    },
+    column_delete: {
+      label: "Delete current column",
+      title: "Delete current column",
+      onClick: deleteCurrentTableColumn,
+      icon: <img src="/svg/column_delete.svg" alt="" aria-hidden="true" width="18" height="18" />
+    },
+    block: {
+      label: "Block",
+      title: "Block",
+      onClick: insertCodeBlock,
+      icon: "🧱"
+    }
+  };
+
+  const mainToolIds = resolveVisibleToolIds(toolConfig.mainTools, toolConfig.hiddenTools, toolRegistry);
+  const tableToolIds = resolveVisibleToolIds(toolConfig.tableTools, toolConfig.hiddenTools, toolRegistry);
+
+  function renderToolButton(toolId) {
+    const tool = toolRegistry[toolId];
+    if (!tool) {
+      return null;
+    }
+
+    return (
+      <button
+        key={toolId}
+        type="button"
+        className="toolbar-button"
+        aria-label={tool.label}
+        title={tool.title}
+        onPointerDown={handleToolbarPointerDown}
+        onClick={tool.onClick}
+      >
+        {tool.icon}
+      </button>
+    );
+  }
+
   return (
     <>
       <Head>
@@ -2654,75 +2864,9 @@ export default function NotePage() {
                 onClick={(event) => event.stopPropagation()}
               >
                 {tableToolsOpen ? (
-                  <>
-                    <button type="button" className="toolbar-button" aria-label="Create table" title="Create table" onPointerDown={handleToolbarPointerDown} onClick={createTableAtEmptyLine}>
-                      <img src="/svg/table_addition.svg" alt="" aria-hidden="true" width="18" height="18" />
-                    </button>
-                    <button type="button" className="toolbar-button" aria-label="Append row below" title="Append row below" onPointerDown={handleToolbarPointerDown} onClick={appendTableRowBelow}>
-                      <img src="/svg/row_addition.svg" alt="" aria-hidden="true" width="18" height="18" />
-                    </button>
-                    <button type="button" className="toolbar-button" aria-label="Append column right" title="Append column right" onPointerDown={handleToolbarPointerDown} onClick={appendTableColumnRight}>
-                      <img src="/svg/column_addition.svg" alt="" aria-hidden="true" width="18" height="18" />
-                    </button>
-                    <button type="button" className="toolbar-button" aria-label="Delete current row" title="Delete current row" onPointerDown={handleToolbarPointerDown} onClick={deleteCurrentTableRow}>
-                      <img src="/svg/row_deletion.svg" alt="" aria-hidden="true" width="18" height="18" />
-                    </button>
-                    <button type="button" className="toolbar-button" aria-label="Delete current column" title="Delete current column" onPointerDown={handleToolbarPointerDown} onClick={deleteCurrentTableColumn}>
-                      <img src="/svg/column_deletion.svg" alt="" aria-hidden="true" width="18" height="18" />
-                    </button>
-                  </>
+                  tableToolIds.map(renderToolButton)
                 ) : (
-                  <>
-                <button type="button" className="toolbar-button" aria-label="List" title="List" onPointerDown={handleToolbarPointerDown} onClick={insertBullet}>
-                  <img src="/svg/bullet.svg" alt="" aria-hidden="true" width="18" height="18" />
-                </button>
-                <button type="button" className="toolbar-button" aria-label="Ordered list" title="Ordered list" onPointerDown={handleToolbarPointerDown} onClick={insertOrderedList}>
-                  <img src="/svg/number_list.svg" alt="" aria-hidden="true" width="18" height="18" />
-                </button>
-                <button type="button" className="toolbar-button" aria-label="Checkbox" title="Checkbox" onPointerDown={handleToolbarPointerDown} onClick={insertCheckbox}>
-                  <img src="/svg/checkbox.svg" alt="" aria-hidden="true" width="18" height="18" />
-                </button>
-                <button
-                  type="button"
-                  className="toolbar-button"
-                  aria-label="Table tools"
-                  title="Table tools"
-                  onPointerDown={handleToolbarPointerDown}
-                  onClick={() => setTableToolsOpen(true)}
-                >
-                  <img src="/svg/table.svg" alt="" aria-hidden="true" width="18" height="18" />
-                </button>
-                <button type="button" className="toolbar-button" aria-label="Bold" title="Bold" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("bold")}>
-                  <img src="/svg/bold.svg" alt="" aria-hidden="true" width="18" height="18" />
-                </button>
-                <button type="button" className="toolbar-button" aria-label="Reformatter" title="Reformatter" onPointerDown={handleToolbarPointerDown} onClick={unwrapSelectionFormatting}>
-                  <img src="/svg/format_remover.svg" alt="" aria-hidden="true" width="18" height="18" />
-                </button>
-                <button type="button" className="toolbar-button" aria-label="Highlight" title="Highlight" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("highlight")}>
-                  <img src="/svg/highlighter.svg" alt="" aria-hidden="true" width="18" height="18" />
-                </button>
-                <button type="button" className="toolbar-button" aria-label="Strikethrough" title="Strikethrough" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("strikeThrough")}>
-                  <img src="/svg/strikethrough.svg" alt="" aria-hidden="true" width="18" height="18" />
-                </button>
-                <button type="button" className="toolbar-button" aria-label="Italic" title="Italic" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("italic")}>
-                  <img src="/svg/italic.svg" alt="" aria-hidden="true" width="18" height="18" />
-                </button>
-                <button type="button" className="toolbar-button" aria-label="Code" title="Code" onPointerDown={handleToolbarPointerDown} onClick={insertInlineCode}>
-                  <img src="/svg/code.svg" alt="" aria-hidden="true" width="18" height="18" />
-                </button>
-                <button type="button" className="toolbar-button" aria-label="Heading 1" title="Heading 1" onPointerDown={handleToolbarPointerDown} onClick={() => applyHeadingCommand(1)}>
-                  <img src="/svg/header1.svg" alt="" aria-hidden="true" width="18" height="18" />
-                </button>
-                <button type="button" className="toolbar-button" aria-label="Heading 2" title="Heading 2" onPointerDown={handleToolbarPointerDown} onClick={() => applyHeadingCommand(2)}>
-                  <img src="/svg/header2.svg" alt="" aria-hidden="true" width="18" height="18" />
-                </button>
-                <button type="button" className="toolbar-button" aria-label="Heading 3" title="Heading 3" onPointerDown={handleToolbarPointerDown} onClick={() => applyHeadingCommand(3)}>
-                  <img src="/svg/header3.svg" alt="" aria-hidden="true" width="18" height="18" />
-                </button>
-                <button type="button" className="toolbar-button" aria-label="Block" title="Block" onPointerDown={handleToolbarPointerDown} onClick={insertCodeBlock} style={{ display: "none" }}>
-                  🧱
-                </button>
-                  </>
+                  mainToolIds.map(renderToolButton)
                 )}
               </aside>
             ) : null}

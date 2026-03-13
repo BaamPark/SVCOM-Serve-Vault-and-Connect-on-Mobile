@@ -331,10 +331,21 @@ function parseFrontmatter(markdown) {
     };
   }
 
+  const frontmatterLines = lines.slice(1, endIndex);
+  const hasPropertyLine = frontmatterLines.some((line) =>
+    /^([A-Za-z0-9_-]+):\s*(.*)$/.test(line)
+  );
+  if (!hasPropertyLine) {
+    return {
+      properties: [],
+      body: normalized
+    };
+  }
+
   const properties = [];
   let currentListProperty = null;
 
-  for (const line of lines.slice(1, endIndex)) {
+  for (const line of frontmatterLines) {
     const listMatch = line.match(/^\s*-\s+(.*)$/);
     if (listMatch && currentListProperty) {
       currentListProperty.items.push(listMatch[1].trim());
@@ -487,6 +498,13 @@ function markdownToHtml(markdown) {
     if (!line.trim()) {
       flushParagraph();
       closeList();
+      continue;
+    }
+
+    if (/^\s*---\s*$/.test(line)) {
+      flushParagraph();
+      closeList();
+      output.push("<hr>");
       continue;
     }
 
