@@ -50,7 +50,7 @@ function flattenNotes(node, results = []) {
 function TreeNode({ node, onOpenNote, onRenameNote, onDeleteNote, depth = 0 }) {
   if (node.type === "note") {
     return (
-      <article className="tree-note-row" style={{ paddingLeft: `${depth * 0.85}rem` }}>
+      <article className="tree-note-row">
         <button type="button" className="tree-note-main" onClick={() => onOpenNote(node.path)}>
           <strong>{node.name}</strong>
           <span>{node.path}</span>
@@ -70,7 +70,7 @@ function TreeNode({ node, onOpenNote, onRenameNote, onDeleteNote, depth = 0 }) {
   const [isOpen, setIsOpen] = useState(node.path === "");
 
   return (
-    <section className="tree-folder" style={{ paddingLeft: depth === 0 ? undefined : `${depth * 0.6}rem` }}>
+    <section className="tree-folder">
       {node.path ? (
         <button
           type="button"
@@ -82,7 +82,10 @@ function TreeNode({ node, onOpenNote, onRenameNote, onDeleteNote, depth = 0 }) {
         </button>
       ) : null}
       {isOpen ? (
-        <div className="tree-folder-children">
+        <div
+          className="tree-folder-children"
+          style={{ paddingLeft: node.path ? "0.9rem" : undefined }}
+        >
           {(node.children || []).map((child) => (
             <TreeNode
               key={child.path || child.name}

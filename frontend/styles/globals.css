@@ -214,10 +214,10 @@ a {
 
 .tree-note-row {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: space-between;
   gap: 0.8rem;
-  padding: 0.85rem 0.95rem;
+  padding: 1rem;
   border: 1px solid var(--line);
   border-radius: 18px;
   background: #ffffff;
@@ -230,7 +230,7 @@ a {
   border: none;
   background: transparent;
   color: inherit;
-  padding: 0;
+  padding: 0.05rem 0;
   text-align: left;
 }
 
@@ -250,6 +250,8 @@ a {
   display: flex;
   gap: 0.55rem;
   flex: 0 0 auto;
+  align-items: center;
+  padding: 0.05rem 0;
 }
 
 .result-item {
