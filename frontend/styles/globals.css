@@ -17,6 +17,7 @@ html,
 body,
 #__next {
   min-height: 100%;
+  max-width: 100%;
 }
 
 body {
@@ -24,6 +25,7 @@ body {
   color: var(--ink);
   font-family: Arial, Helvetica, sans-serif;
   background: #ffffff;
+  overflow-x: hidden;
 }
 
 button,
@@ -131,6 +133,8 @@ a {
   margin: 0 auto;
   display: grid;
   gap: 1rem;
+  width: 100%;
+  overflow-x: hidden;
 }
 
 .topbar {
@@ -138,26 +142,114 @@ a {
   justify-content: space-between;
   align-items: flex-start;
   gap: 1rem;
+  min-width: 0;
 }
 
 .topbar-actions {
   display: flex;
   gap: 0.75rem;
   flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .list-panel {
   padding: 1rem;
+  min-width: 0;
 }
 
 .list-summary {
   margin-top: 1rem;
 }
 
+.view-toggle-row {
+  display: flex;
+  gap: 0.55rem;
+  margin-top: 0.85rem;
+}
+
 .results-list {
   display: grid;
   gap: 0.8rem;
   margin-top: 1rem;
+}
+
+.tree-view {
+  display: grid;
+  gap: 0.7rem;
+  margin-top: 1rem;
+}
+
+.tree-folder {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.tree-folder-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 0.35rem 0;
+  text-align: left;
+}
+
+.tree-folder-caret {
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.tree-folder-label {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.tree-folder-children {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.tree-note-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #ffffff;
+  min-width: 0;
+}
+
+.tree-note-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.tree-note-main strong,
+.tree-note-main span {
+  display: block;
+}
+
+.tree-note-main span {
+  margin-top: 0.24rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.tree-note-actions {
+  display: flex;
+  gap: 0.55rem;
+  flex: 0 0 auto;
 }
 
 .result-item {
@@ -170,6 +262,7 @@ a {
   padding: 1rem;
   background: #ffffff;
   color: var(--ink);
+  min-width: 0;
 }
 
 .result-main {
@@ -192,6 +285,8 @@ a {
 .result-main p {
   margin-top: 0.3rem;
   color: var(--muted);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .result-actions {
@@ -199,10 +294,12 @@ a {
   align-items: center;
   gap: 0.55rem;
   flex: 0 0 auto;
+  max-width: 100%;
 }
 
 .result-action-button {
   padding: 0.5rem 0.8rem;
+  white-space: nowrap;
 }
 
 .empty-state {
@@ -219,7 +316,7 @@ a {
 
 .note-mobile-screen {
   min-height: 100vh;
-  padding: 1rem 1rem 5.75rem;
+  padding: 1rem;
   background: #ffffff;
   color: #111111;
 }
@@ -344,12 +441,12 @@ a {
   min-height: 62vh;
   border: none;
   border-radius: 0;
-  padding: 0;
+  padding: 0 0 42vh;
   background: transparent;
   color: #111111;
   font-family: Arial, Helvetica, sans-serif;
-  font-size: 1.28rem;
-  line-height: 1.7;
+  font-size: 1.08rem;
+  line-height: 1.65;
   outline: none;
 }
 
@@ -371,6 +468,32 @@ a {
 
 .visual-editor-surface ul {
   padding-left: 1.2rem;
+}
+
+.visual-editor-surface .task-item {
+  list-style: none;
+  margin-left: -1.2rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.visual-editor-surface .task-checkbox {
+  width: 1rem;
+  height: 1rem;
+  margin-top: 0.35rem;
+  accent-color: #7c5cff;
+  flex: 0 0 auto;
+}
+
+.visual-editor-surface .task-content {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.visual-editor-surface .task-content-checked {
+  color: #7a7a7a;
+  text-decoration: line-through;
 }
 
 .visual-editor-surface blockquote {
@@ -397,7 +520,7 @@ a {
 .markdown-editor-surface {
   min-height: 70vh;
   resize: none;
-  font-size: 1rem;
+  font-size: 0.98rem;
 }
 
 .mobile-editor-toolbar {
@@ -412,6 +535,49 @@ a {
   background: rgba(255, 255, 255, 0.96);
   border-top: 1px solid rgba(0, 0, 0, 0.08);
   backdrop-filter: blur(12px);
+
+}
+
+.floating-tools-button {
+  position: fixed;
+  z-index: 20;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: #111111;
+  color: #ffffff;
+  border-radius: 999px;
+  width: 3.2rem;
+  height: 3.2rem;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 1.2rem;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.12);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.floating-tools-panel {
+  position: fixed;
+  z-index: 20;
+  display: flex;
+  gap: 0.45rem;
+  width: min(calc(100vw - 2rem), 28rem);
+  padding: 0.75rem;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(10px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.floating-tools-panel .toolbar-button {
+  flex: 0 0 auto;
+  justify-content: center;
 }
 
 .toolbar-button {
@@ -425,10 +591,61 @@ a {
 
   .result-item {
     align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .result-actions,
+  .tree-note-actions {
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .tree-note-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 640px) {
+  .login-screen,
+  .list-screen,
+  .note-screen {
+    padding: 1rem;
+  }
+
+  .topbar,
+  .topbar > div,
+  .topbar-actions,
+  .list-panel,
+  .view-toggle-row,
+  .results-list,
+  .result-item,
+  .result-main,
+  .result-actions,
+  .tree-view,
+  .tree-note-row,
+  .tree-note-main,
+  .tree-note-actions {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .topbar-actions {
+    gap: 0.5rem;
+  }
+
+  .topbar-actions > button,
+  .result-action-button {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .result-item {
+    padding: 0.9rem;
   }
 
   .result-actions {
-    flex-direction: column;
-    align-items: stretch;
+    margin-top: 0.35rem;
   }
 }

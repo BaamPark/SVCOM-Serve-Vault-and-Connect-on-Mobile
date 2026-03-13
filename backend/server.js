@@ -483,6 +483,20 @@ function markdownToHtml(markdown) {
       continue;
     }
 
+    const checkboxMatch = line.match(/^[-*]\s+\[( |x|X)\]\s+(.*)$/);
+    if (checkboxMatch) {
+      flushParagraph();
+      if (!inList) {
+        output.push("<ul>");
+        inList = true;
+      }
+      const checked = checkboxMatch[1].toLowerCase() === "x" ? " checked" : "";
+      output.push(
+        `<li class="task-item${checked ? " task-item-checked" : ""}"><input type="checkbox" class="task-checkbox" contenteditable="false"${checked}><span class="task-content${checked ? " task-content-checked" : ""}">${inlineMarkdown(checkboxMatch[2])}</span></li>`
+      );
+      continue;
+    }
+
     const listMatch = line.match(/^[-*]\s+(.*)$/);
     if (listMatch) {
       flushParagraph();

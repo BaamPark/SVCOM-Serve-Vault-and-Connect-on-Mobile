@@ -47,14 +47,68 @@ function flattenNotes(node, results = []) {
   return results;
 }
 
+function TreeNode({ node, onOpenNote, onRenameNote, onDeleteNote, depth = 0 }) {
+  if (node.type === "note") {
+    return (
+      <article className="tree-note-row" style={{ paddingLeft: `${depth * 0.85}rem` }}>
+        <button type="button" className="tree-note-main" onClick={() => onOpenNote(node.path)}>
+          <strong>{node.name}</strong>
+          <span>{node.path}</span>
+        </button>
+        <div className="tree-note-actions">
+          <button type="button" className="secondary result-action-button" onClick={() => void onRenameNote(node.path)}>
+            Rename
+          </button>
+          <button type="button" className="danger result-action-button" onClick={() => void onDeleteNote(node.path)}>
+            Delete
+          </button>
+        </div>
+      </article>
+    );
+  }
+
+  const [isOpen, setIsOpen] = useState(node.path === "");
+
+  return (
+    <section className="tree-folder" style={{ paddingLeft: depth === 0 ? undefined : `${depth * 0.6}rem` }}>
+      {node.path ? (
+        <button
+          type="button"
+          className="tree-folder-toggle"
+          onClick={() => setIsOpen((value) => !value)}
+        >
+          <span className="tree-folder-caret">{isOpen ? "▾" : "▸"}</span>
+          <span className="tree-folder-label">{node.name}</span>
+        </button>
+      ) : null}
+      {isOpen ? (
+        <div className="tree-folder-children">
+          {(node.children || []).map((child) => (
+            <TreeNode
+              key={child.path || child.name}
+              node={child}
+              depth={node.path ? depth + 1 : depth}
+              onOpenNote={onOpenNote}
+              onRenameNote={onRenameNote}
+              onDeleteNote={onDeleteNote}
+            />
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export default function AppPage() {
   const router = useRouter();
   const [vaultName, setVaultName] = useState("Vault Browser");
   const [status, setStatus] = useState("Loading notes...");
   const [query, setQuery] = useState("");
+  const [tree, setTree] = useState(null);
   const [allNotes, setAllNotes] = useState([]);
   const [results, setResults] = useState([]);
   const [searchMode, setSearchMode] = useState(false);
+  const [viewMode, setViewMode] = useState("list");
 
   useEffect(() => {
     let active = true;
@@ -81,6 +135,7 @@ export default function AppPage() {
         );
 
         setVaultName(configPayload.vaultName || "Vault Browser");
+        setTree(notesPayload.tree);
         setAllNotes(notes);
         setResults(notes);
         setStatus(`${notes.length} notes available`);
@@ -167,6 +222,7 @@ export default function AppPage() {
     const notes = flattenNotes(notesPayload.tree).sort((left, right) =>
       left.path.localeCompare(right.path)
     );
+    setTree(notesPayload.tree);
     setAllNotes(notes);
     setResults(notes);
     setStatus(`${notes.length} notes available`);
@@ -185,6 +241,7 @@ export default function AppPage() {
     const notes = flattenNotes(notesPayload.tree).sort((left, right) =>
       left.path.localeCompare(right.path)
     );
+    setTree(notesPayload.tree);
     setAllNotes(notes);
     setResults(notes);
     setStatus(`${notes.length} notes available`);
@@ -233,11 +290,38 @@ export default function AppPage() {
             <h2>{searchMode ? "Search Results" : "All Notes"}</h2>
             <p className="muted">{subtitle}</p>
           </div>
+          {!searchMode ? (
+            <div className="view-toggle-row">
+              <button
+                type="button"
+                className={viewMode === "list" ? "chip-button active" : "chip-button"}
+                onClick={() => setViewMode("list")}
+              >
+                List
+              </button>
+              <button
+                type="button"
+                className={viewMode === "tree" ? "chip-button active" : "chip-button"}
+                onClick={() => setViewMode("tree")}
+              >
+                Tree
+              </button>
+            </div>
+          ) : null}
           {results.length === 0 ? (
             <article className="empty-state">
               <h2>No notes found</h2>
               <p>Try a different search term or create a new note.</p>
             </article>
+          ) : !searchMode && viewMode === "tree" && tree ? (
+            <div className="tree-view">
+              <TreeNode
+                node={tree}
+                onOpenNote={(notePath) => router.push(`/note?path=${encodeURIComponent(notePath)}`)}
+                onRenameNote={renameNote}
+                onDeleteNote={deleteNote}
+              />
+            </div>
           ) : (
             <div className="results-list">
               {results.map((item) => (

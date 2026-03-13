@@ -74,7 +74,7 @@ function serializeInline(node) {
     case "I":
       return `*${text}*`;
     case "CODE":
-      return `\`${text}\``;
+      return `\`${text.replace(/\u200b/g, "")}\``;
     case "A": {
       const noteLink = element.getAttribute("data-note-link");
       if (noteLink) {
@@ -121,11 +121,14 @@ function serializeBlock(node) {
         .filter((child) => child.tagName === "LI")
         .map((child) => {
           const checkbox = child.querySelector('input[type="checkbox"]');
-          const content = Array.from(child.childNodes)
-            .filter((entry) => entry !== checkbox)
-            .map(serializeInline)
-            .join("")
-            .trim();
+          const taskContent = child.querySelector(".task-content");
+          const content = taskContent
+            ? Array.from(taskContent.childNodes).map(serializeInline).join("").trim()
+            : Array.from(child.childNodes)
+                .filter((entry) => entry !== checkbox)
+                .map(serializeInline)
+                .join("")
+                .trim();
           if (checkbox) {
             return checkbox.checked ? `- [x] ${content}` : `- [ ] ${content}`;
           }
@@ -173,6 +176,53 @@ function normalizeLinkTargets(rootElement) {
       link.removeAttribute("href");
     }
   });
+}
+
+function syncTaskItemState(taskItem) {
+  if (!taskItem) {
+    return;
+  }
+
+  const checkbox = taskItem.querySelector('input[type="checkbox"]');
+  const content = taskItem.querySelector(".task-content");
+  if (!checkbox || !content) {
+    return;
+  }
+
+  taskItem.classList.toggle("task-item-checked", checkbox.checked);
+  content.classList.toggle("task-content-checked", checkbox.checked);
+}
+
+function createTaskListItem(checked, htmlContent = "task") {
+  const item = document.createElement("li");
+  item.className = "task-item";
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.className = "task-checkbox";
+  checkbox.checked = checked;
+  checkbox.setAttribute("contenteditable", "false");
+
+  const content = document.createElement("span");
+  content.className = "task-content";
+  content.innerHTML = htmlContent || "<br>";
+
+  item.appendChild(checkbox);
+  item.appendChild(content);
+  syncTaskItemState(item);
+  return item;
+}
+
+function placeCaretInsideTaskContent(taskItem) {
+  const content = taskItem?.querySelector(".task-content");
+  if (!content) {
+    return;
+  }
+
+  if (!content.childNodes.length) {
+    content.appendChild(document.createElement("br"));
+  }
+  placeCaretAtEnd(content);
 }
 
 function parseFrontmatter(markdown) {
@@ -363,7 +413,8 @@ function placeCaretAtEnd(node) {
   selection.addRange(range);
 }
 
-function keepCaretVisible(rootElement) {
+function keepCaretVisible(rootElement, options = {}) {
+  const { bottomBlockedHeight = 180 } = options;
   const selection = window.getSelection();
   if (!selection || selection.rangeCount === 0) {
     return;
@@ -386,8 +437,8 @@ function keepCaretVisible(rootElement) {
   }
 
   const viewportHeight = window.visualViewport?.height || window.innerHeight;
-  const topSafeZone = 88;
-  const bottomSafeZone = 180;
+  const topSafeZone = 12;
+  const bottomSafeZone = Math.max(180, bottomBlockedHeight);
   const currentScroll = window.scrollY || window.pageYOffset || 0;
 
   if (rect.bottom > viewportHeight - bottomSafeZone) {
@@ -416,6 +467,15 @@ function keepCaretVisible(rootElement) {
   }
 }
 
+function selectionInsideRoot(rootElement) {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !rootElement) {
+    return false;
+  }
+
+  return rootElement.contains(selection.getRangeAt(0).startContainer);
+}
+
 function currentBlockElement(rootElement) {
   const selection = window.getSelection();
   if (!selection || selection.rangeCount === 0) {
@@ -434,6 +494,15 @@ function currentBlockElement(rootElement) {
   }
 
   return null;
+}
+
+function currentTaskItem(rootElement) {
+  const block = currentBlockElement(rootElement);
+  if (!block) {
+    return null;
+  }
+
+  return block.classList?.contains("task-item") ? block : block.closest?.(".task-item") || null;
 }
 
 function isEmptyStructuredItem(block) {
@@ -500,6 +569,20 @@ function applyMarkdownShortcut(rootElement) {
     return false;
   }
 
+  if (block.tagName === "LI" && !block.querySelector('input[type="checkbox"]')) {
+    const nestedCheckboxMatch = text.match(/^\[( |x|X)\]\s*(.*)$/);
+    if (nestedCheckboxMatch) {
+      const taskItem = createTaskListItem(
+        nestedCheckboxMatch[1].toLowerCase() === "x",
+        renderInlineMarkdown(nestedCheckboxMatch[2] || "")
+      );
+      parent.replaceChild(taskItem, block);
+      normalizeLinkTargets(taskItem);
+      placeCaretInsideTaskContent(taskItem);
+      return true;
+    }
+  }
+
   const bulletMatch = text.match(/^[-*]\s+(.*)$/);
   if (text === "- " || text === "* " || bulletMatch) {
     const list = document.createElement("ul");
@@ -523,14 +606,10 @@ function applyMarkdownShortcut(rootElement) {
   const checkboxMatch = text.match(/^-\s\[( |x)\]\s+(.*)$/i);
   if (checkboxMatch) {
     const list = document.createElement("ul");
-    const item = document.createElement("li");
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.disabled = true;
-    checkbox.checked = checkboxMatch[1].toLowerCase() === "x";
-    item.appendChild(checkbox);
-    item.append(" ");
-    item.insertAdjacentHTML("beforeend", renderInlineMarkdown(checkboxMatch[2] || ""));
+    const item = createTaskListItem(
+      checkboxMatch[1].toLowerCase() === "x",
+      renderInlineMarkdown(checkboxMatch[2] || "")
+    );
     list.appendChild(item);
     parent.replaceChild(list, block);
     placeCaretAtEnd(item);
@@ -680,6 +759,10 @@ function revertStructuredBlockToMarkdown(rootElement) {
 }
 
 export default function NotePage() {
+  const floatingButtonSize = 52;
+  const floatingButtonMargin = 16;
+  const floatingBottomOffset = 88;
+
   const router = useRouter();
   const { path: notePathQuery } = router.query;
   const [tree, setTree] = useState(null);
@@ -691,11 +774,27 @@ export default function NotePage() {
   const [status, setStatus] = useState("Connecting...");
   const [loaded, setLoaded] = useState(false);
   const [editorMode, setEditorMode] = useState("visual");
+  const [floatingToolsOpen, setFloatingToolsOpen] = useState(false);
+  const [floatingToolsCorner, setFloatingToolsCorner] = useState("bottom-right");
+  const [floatingToolsDragPosition, setFloatingToolsDragPosition] = useState(null);
+  const [keyboardInset, setKeyboardInset] = useState(0);
+  const [cursorAlignedY, setCursorAlignedY] = useState(null);
   const [saveRevision, setSaveRevision] = useState(0);
   const pendingSaveRef = useRef(false);
   const dirtyRef = useRef(false);
   const eventSourceRef = useRef(null);
   const visualEditorRef = useRef(null);
+  const savedSelectionRef = useRef(null);
+  const lastKeyboardInsetRef = useRef(0);
+  const floatingDragRef = useRef({
+    active: false,
+    moved: false,
+    pointerId: null,
+    startX: 0,
+    startY: 0,
+    startLeft: 0,
+    startTop: 0
+  });
 
   function noteTitle() {
     if (!notePath) {
@@ -712,6 +811,113 @@ export default function NotePage() {
     }
     editor.innerHTML = nextHtml || "<p></p>";
     normalizeLinkTargets(editor);
+  }
+
+  function saveEditorSelection() {
+    const editor = visualEditorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection || selection.rangeCount === 0) {
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    if (!editor.contains(range.startContainer)) {
+      return;
+    }
+
+    savedSelectionRef.current = range.cloneRange();
+  }
+
+  function restoreEditorSelection() {
+    const selection = window.getSelection();
+    if (!selection || !savedSelectionRef.current) {
+      return false;
+    }
+
+    try {
+      selection.removeAllRanges();
+      selection.addRange(savedSelectionRef.current.cloneRange());
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function ensureEditorSelection() {
+    const editor = visualEditorRef.current;
+    if (!editor) {
+      return false;
+    }
+
+    if (selectionInsideRoot(editor)) {
+      return true;
+    }
+
+    return restoreEditorSelection();
+  }
+
+  function currentEditorRange() {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      return null;
+    }
+
+    const range = selection.getRangeAt(0);
+    const editor = visualEditorRef.current;
+    if (!editor || !editor.contains(range.startContainer)) {
+      return null;
+    }
+
+    return range;
+  }
+
+  function selectNodeContents(node) {
+    const selection = window.getSelection();
+    if (!selection || !node) {
+      return;
+    }
+
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    saveEditorSelection();
+  }
+
+  function updateCursorAlignedY() {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    let rect = range.getBoundingClientRect();
+    if (!rect || rect.height === 0) {
+      let node = range.startContainer;
+      if (node.nodeType === Node.TEXT_NODE) {
+        node = node.parentNode;
+      }
+      if (node && typeof node.getBoundingClientRect === "function") {
+        rect = node.getBoundingClientRect();
+      }
+    }
+    if (!rect) {
+      return;
+    }
+    // getBoundingClientRect is in visual viewport coords.
+    // position:fixed uses layout viewport (ICB) coords.
+    // vvp.offsetTop is the gap between them — must add it to convert.
+    const vvp = window.visualViewport;
+    const offsetTop = vvp?.offsetTop || 0;
+    const effectiveHeight = vvp?.height || window.innerHeight;
+    const cursorCenter = rect.top + offsetTop + rect.height / 2;
+    const buttonTop = cursorCenter - floatingButtonSize / 2;
+    setCursorAlignedY(
+      Math.max(
+        offsetTop + floatingButtonMargin,
+        Math.min(buttonTop, offsetTop + effectiveHeight - floatingButtonSize - 4)
+      )
+    );
   }
 
   async function saveCurrentContent(contentToSave, options = {}) {
@@ -806,6 +1012,72 @@ export default function NotePage() {
     }
     syncVisualEditor(visualHtml);
   }, [editorMode, loaded, visualHtml]);
+
+  useEffect(() => {
+    if (!loaded || editorMode !== "visual") {
+      return;
+    }
+
+    function handleSelectionChange() {
+      if (selectionInsideRoot(visualEditorRef.current)) {
+        saveEditorSelection();
+      }
+    }
+
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => {
+      document.removeEventListener("selectionchange", handleSelectionChange);
+    };
+  }, [editorMode, keyboardInset, loaded]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.visualViewport) {
+      return;
+    }
+
+    function updateKeyboardInset() {
+      const viewport = window.visualViewport;
+      const viewportHeight = viewport?.height || window.innerHeight;
+      const keyboardHeight = Math.max(0, window.innerHeight - viewportHeight - (viewport?.offsetTop || 0));
+      const nextInset = keyboardHeight > 120 ? keyboardHeight : 0;
+      if (Math.abs(nextInset - lastKeyboardInsetRef.current) < 24) {
+        return;
+      }
+      lastKeyboardInsetRef.current = nextInset;
+      setKeyboardInset(nextInset);
+    }
+
+    let scrollDebounce;
+    function handleWindowScroll() {
+      if (lastKeyboardInsetRef.current <= 0) {
+        return;
+      }
+      clearTimeout(scrollDebounce);
+      scrollDebounce = setTimeout(updateCursorAlignedY, 60);
+    }
+
+    updateKeyboardInset();
+    window.visualViewport.addEventListener("resize", updateKeyboardInset);
+    window.addEventListener("scroll", handleWindowScroll, { passive: true });
+
+    return () => {
+      window.visualViewport?.removeEventListener("resize", updateKeyboardInset);
+      window.removeEventListener("scroll", handleWindowScroll);
+      clearTimeout(scrollDebounce);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!loaded || editorMode !== "visual") {
+      return;
+    }
+
+    if (keyboardInset > 0) {
+      setTimeout(updateCursorAlignedY, 120);
+    } else {
+      setCursorAlignedY(null);
+    }
+  }, [editorMode, keyboardInset, loaded]);
 
   useEffect(() => {
     if (!loaded) {
@@ -918,7 +1190,7 @@ export default function NotePage() {
       setMarkdownContent(nextBody);
       setRawMarkdownContent(composeNoteMarkdown(properties, nextBody));
       setSaveRevision((value) => value + 1);
-      window.requestAnimationFrame(() => keepCaretVisible(visualEditorRef.current));
+      saveEditorSelection();
       return;
     }
     applyMarkdownShortcut(visualEditorRef.current);
@@ -928,7 +1200,7 @@ export default function NotePage() {
     setMarkdownContent(nextBody);
     setRawMarkdownContent(composeNoteMarkdown(properties, nextBody));
     setSaveRevision((value) => value + 1);
-    window.requestAnimationFrame(() => keepCaretVisible(visualEditorRef.current));
+    saveEditorSelection();
   }
 
   function handleVisualKeyUp(event) {
@@ -946,11 +1218,23 @@ export default function NotePage() {
   }
 
   function handleVisualKeyDown(event) {
-    if (event.key !== "Backspace" || !visualEditorRef.current) {
+    if (!visualEditorRef.current) {
       return;
     }
 
-    if (revertStructuredBlockToMarkdown(visualEditorRef.current)) {
+    if (event.key === "Enter") {
+      const taskItem = currentTaskItem(visualEditorRef.current);
+      if (taskItem) {
+        event.preventDefault();
+        const nextTaskItem = createTaskListItem(false, "<br>");
+        taskItem.insertAdjacentElement("afterend", nextTaskItem);
+        placeCaretInsideTaskContent(nextTaskItem);
+        handleVisualInput();
+        return;
+      }
+    }
+
+    if (event.key === "Backspace" && revertStructuredBlockToMarkdown(visualEditorRef.current)) {
       event.preventDefault();
       handleVisualInput();
     }
@@ -982,30 +1266,257 @@ export default function NotePage() {
     if (editorMode !== "visual") {
       return;
     }
-    visualEditorRef.current?.focus();
+    if (!ensureEditorSelection()) {
+      setFloatingToolsOpen(false);
+      return;
+    }
     document.execCommand(command, false, value);
     handleVisualInput();
+    setFloatingToolsOpen(false);
+  }
+
+  function handleToolbarPointerDown(event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function floatingCornerPosition(corner) {
+    const viewportWidth = typeof window !== "undefined" ? window.innerWidth || 390 : 390;
+    const viewportHeight = typeof window !== "undefined" ? window.innerHeight || 844 : 844;
+    const vvp = typeof window !== "undefined" ? window.visualViewport : null;
+    const offsetTop = keyboardInset > 0 ? (vvp?.offsetTop || 0) : 0;
+    const effectiveHeight = keyboardInset > 0 ? (vvp?.height || viewportHeight) : viewportHeight;
+    const top = corner.startsWith("top")
+      ? offsetTop + floatingButtonMargin
+      : offsetTop + effectiveHeight - floatingBottomOffset - floatingButtonSize;
+    const left = corner.endsWith("left")
+      ? floatingButtonMargin
+      : viewportWidth - floatingButtonMargin - floatingButtonSize;
+
+    return { left, top };
+  }
+
+  function floatingButtonPosition() {
+    if (keyboardInset > 0 && cursorAlignedY !== null) {
+      const viewportWidth = typeof window !== "undefined" ? window.innerWidth || 390 : 390;
+      const isLeft = floatingToolsCorner.endsWith("left");
+      return {
+        left: isLeft ? floatingButtonMargin : viewportWidth - floatingButtonMargin - floatingButtonSize,
+        top: cursorAlignedY
+      };
+    }
+    return floatingToolsDragPosition || floatingCornerPosition(floatingToolsCorner);
+  }
+
+  function clampFloatingDragPosition(left, top) {
+    const viewportWidth = typeof window !== "undefined" ? window.innerWidth || 390 : 390;
+    const viewportHeight = typeof window !== "undefined" ? window.innerHeight || 844 : 844;
+    const vvp = typeof window !== "undefined" ? window.visualViewport : null;
+    const offsetTop = keyboardInset > 0 ? (vvp?.offsetTop || 0) : 0;
+    const effectiveHeight = keyboardInset > 0 ? (vvp?.height || viewportHeight) : viewportHeight;
+    return {
+      left: Math.min(
+        Math.max(left, floatingButtonMargin),
+        viewportWidth - floatingButtonMargin - floatingButtonSize
+      ),
+      top: Math.min(
+        Math.max(top, offsetTop + floatingButtonMargin),
+        offsetTop + effectiveHeight - floatingButtonMargin - floatingButtonSize
+      )
+    };
+  }
+
+  function dragDirectionCorner(deltaX, deltaY) {
+    const currentVertical = floatingToolsCorner.startsWith("top") ? "top" : "bottom";
+    const currentHorizontal = floatingToolsCorner.endsWith("left") ? "left" : "right";
+    const horizontal = Math.abs(deltaX) < 8 ? currentHorizontal : deltaX < 0 ? "left" : "right";
+    const vertical = Math.abs(deltaY) < 8 ? currentVertical : deltaY < 0 ? "top" : "bottom";
+    return `${vertical}-${horizontal}`;
+  }
+
+  function handleFloatingButtonPointerDown(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+
+    const current = floatingButtonPosition();
+    const drag = floatingDragRef.current;
+    drag.active = true;
+    drag.moved = false;
+    drag.pointerId = event.pointerId;
+    drag.startX = event.clientX;
+    drag.startY = event.clientY;
+    drag.startLeft = current.left;
+    drag.startTop = current.top;
+  }
+
+  function handleFloatingButtonPointerMove(event) {
+    event.stopPropagation();
+    const drag = floatingDragRef.current;
+    if (!drag.active || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+    if (Math.abs(deltaX) > 4 || Math.abs(deltaY) > 4) {
+      drag.moved = true;
+    }
+
+    setFloatingToolsDragPosition(
+      clampFloatingDragPosition(drag.startLeft + deltaX, drag.startTop + deltaY)
+    );
+  }
+
+  function handleFloatingButtonPointerUp(event) {
+    event.stopPropagation();
+    const drag = floatingDragRef.current;
+    if (!drag.active || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    drag.active = false;
+    drag.pointerId = null;
+
+    if (!drag.moved) {
+      setFloatingToolsOpen((value) => !value);
+      setFloatingToolsDragPosition(null);
+      return;
+    }
+
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+    setFloatingToolsCorner(dragDirectionCorner(deltaX, deltaY));
+    setFloatingToolsDragPosition(null);
+  }
+
+  function runHistoryCommand(command) {
+    if (editorMode !== "visual") {
+      return;
+    }
+
+    if (!ensureEditorSelection()) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+    document.execCommand(command, false);
+    handleVisualInput();
+    setFloatingToolsOpen(false);
   }
 
   function insertInlineCode() {
     if (editorMode !== "visual" || !visualEditorRef.current) {
       return;
     }
-    visualEditorRef.current.focus();
-    document.execCommand("insertHTML", false, "<code>code</code>");
+    if (!ensureEditorSelection()) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+    const range = currentEditorRange();
+    if (!range) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const code = document.createElement("code");
+    if (range.collapsed) {
+      code.textContent = "\u200b";
+      range.insertNode(code);
+      selectNodeContents(code);
+    } else {
+      const contents = range.extractContents();
+      code.appendChild(contents);
+      range.insertNode(code);
+      const selection = window.getSelection();
+      if (selection) {
+        const nextRange = document.createRange();
+        nextRange.selectNodeContents(code);
+        selection.removeAllRanges();
+        selection.addRange(nextRange);
+        saveEditorSelection();
+      }
+    }
     handleVisualInput();
+    setFloatingToolsOpen(false);
   }
 
   function insertCodeBlock() {
     if (editorMode !== "visual" || !visualEditorRef.current) {
       return;
     }
-    visualEditorRef.current.focus();
+    if (!ensureEditorSelection()) {
+      setFloatingToolsOpen(false);
+      return;
+    }
     document.execCommand("insertHTML", false, "<pre><code><br></code></pre>");
+    handleVisualInput();
+    setFloatingToolsOpen(false);
+  }
+
+  function insertCheckbox() {
+    if (editorMode !== "visual" || !visualEditorRef.current) {
+      return;
+    }
+    const editor = visualEditorRef.current;
+    if (!ensureEditorSelection()) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const taskItem = currentTaskItem(editor);
+    if (taskItem) {
+      const nextTaskItem = createTaskListItem(false, "task");
+      taskItem.insertAdjacentElement("afterend", nextTaskItem);
+      placeCaretInsideTaskContent(nextTaskItem);
+      handleVisualInput();
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const currentBlock = currentBlockElement(editor);
+    const list = document.createElement("ul");
+    const item = createTaskListItem(false, "task");
+    list.appendChild(item);
+
+    if (currentBlock && currentBlock.parentNode) {
+      const blockText = (currentBlock.textContent || "").trim();
+      const isEmptyParagraph =
+        ["P", "DIV"].includes(currentBlock.tagName) && blockText === "";
+
+      if (isEmptyParagraph) {
+        currentBlock.parentNode.replaceChild(list, currentBlock);
+      } else {
+        currentBlock.insertAdjacentElement("afterend", list);
+      }
+    } else {
+      editor.appendChild(list);
+    }
+
+    placeCaretInsideTaskContent(item);
+    handleVisualInput();
+    setFloatingToolsOpen(false);
+  }
+
+  function handleVisualPointerDown(event) {
+    const checkbox = event.target.closest(".task-checkbox");
+    if (!checkbox) {
+      return;
+    }
+
+    event.preventDefault();
+    checkbox.checked = !checkbox.checked;
+    syncTaskItemState(checkbox.closest(".task-item"));
     handleVisualInput();
   }
 
   function onVisualClick(event) {
+    const checkbox = event.target.closest(".task-checkbox");
+    if (checkbox) {
+      event.preventDefault();
+      return;
+    }
+
     const noteLink = event.target.closest("[data-note-link]");
     if (!noteLink || !tree) {
       return;
@@ -1019,12 +1530,23 @@ export default function NotePage() {
     }
   }
 
+  const floatingPosition = floatingButtonPosition();
+  const displayFloatingCorner = floatingToolsCorner;
+  const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 390;
+  const panelWidth = Math.min(192, viewportWidth - 32);
+  const floatingPanelLeft = displayFloatingCorner.endsWith("left")
+    ? floatingPosition.left
+    : Math.max(16, floatingPosition.left + floatingButtonSize - panelWidth);
+  const floatingPanelTop = (keyboardInset > 0 && cursorAlignedY !== null) || displayFloatingCorner.startsWith("bottom")
+    ? Math.max(16, floatingPosition.top - 12 - 80)
+    : floatingPosition.top + floatingButtonSize + 12;
+
   return (
     <>
       <Head>
         <title>{noteTitle()}</title>
       </Head>
-      <section className="note-mobile-screen">
+<section className="note-mobile-screen">
         <header className="note-mobile-header">
           <div className="note-header-toprow">
             <Link href="/app" className="icon-button">Back</Link>
@@ -1088,6 +1610,8 @@ export default function NotePage() {
             onInput={handleVisualInput}
             onKeyDown={handleVisualKeyDown}
             onKeyUp={handleVisualKeyUp}
+            onPointerDown={handleVisualPointerDown}
+            onPointerUp={() => { if (keyboardInset > 0) window.requestAnimationFrame(updateCursorAlignedY); }}
             onClick={onVisualClick}
           />
           ) : (
@@ -1100,38 +1624,70 @@ export default function NotePage() {
         </main>
 
         {editorMode === "visual" ? (
-          <footer className="mobile-editor-toolbar">
-            <button type="button" className="toolbar-button" onClick={() => document.execCommand("undo")}>
-              Undo
+          <>
+            <button
+              type="button"
+              className="floating-tools-button"
+              style={{
+                ...floatingPosition,
+                transition: floatingToolsDragPosition ? "none" : "left 180ms ease, top 180ms ease"
+              }}
+              onPointerDown={handleFloatingButtonPointerDown}
+              onPointerMove={handleFloatingButtonPointerMove}
+              onPointerUp={handleFloatingButtonPointerUp}
+              onPointerCancel={handleFloatingButtonPointerUp}
+              onClick={(event) => event.stopPropagation()}
+              aria-label="Tools"
+            >
+              🛠
             </button>
-            <button type="button" className="toolbar-button" onClick={() => document.execCommand("redo")}>
-              Redo
-            </button>
-            <button type="button" className="toolbar-button" onClick={() => applyCommand("formatBlock", "<h1>")}>
-              H1
-            </button>
-            <button type="button" className="toolbar-button" onClick={() => applyCommand("formatBlock", "<h2>")}>
-              H2
-            </button>
-            <button type="button" className="toolbar-button" onClick={() => applyCommand("bold")}>
-              B
-            </button>
-            <button type="button" className="toolbar-button" onClick={() => applyCommand("italic")}>
-              I
-            </button>
-            <button type="button" className="toolbar-button" onClick={insertInlineCode}>
-              Code
-            </button>
-            <button type="button" className="toolbar-button" onClick={insertCodeBlock}>
-              Block
-            </button>
-            <button type="button" className="toolbar-button" onClick={() => applyCommand("insertUnorderedList")}>
-              List
-            </button>
-            <button type="button" className="toolbar-button" onClick={() => applyCommand("formatBlock", "<blockquote>")}>
-              Quote
-            </button>
-          </footer>
+            {floatingToolsOpen ? (
+              <aside
+                className="floating-tools-panel"
+                style={{
+                  left: floatingPanelLeft,
+                  top: floatingPanelTop,
+                  transition: floatingToolsDragPosition ? "none" : "left 180ms ease, top 180ms ease"
+                }}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={() => runHistoryCommand("undo")}>
+                  Undo
+                </button>
+                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={() => runHistoryCommand("redo")}>
+                  Redo
+                </button>
+                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("formatBlock", "<h1>")}>
+                  H1
+                </button>
+                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("formatBlock", "<h2>")}>
+                  H2
+                </button>
+                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("bold")}>
+                  B
+                </button>
+                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("italic")}>
+                  I
+                </button>
+                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={insertInlineCode}>
+                  Code
+                </button>
+                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={insertCodeBlock}>
+                  Block
+                </button>
+                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={insertCheckbox}>
+                  Check
+                </button>
+                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("insertUnorderedList")}>
+                  List
+                </button>
+                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("formatBlock", "<blockquote>")}>
+                  Quote
+                </button>
+              </aside>
+            ) : null}
+          </>
         ) : null}
       </section>
     </>
