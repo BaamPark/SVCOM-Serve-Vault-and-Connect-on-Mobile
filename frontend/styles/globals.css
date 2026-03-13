@@ -469,6 +469,7 @@ a {
 .visual-editor-surface h3,
 .visual-editor-surface p,
 .visual-editor-surface ul,
+.visual-editor-surface table,
 .visual-editor-surface blockquote,
 .visual-editor-surface pre {
   margin: 0 0 1rem;
@@ -529,6 +530,27 @@ a {
 .visual-editor-surface pre {
   padding: 0.85rem;
   overflow: auto;
+}
+
+.visual-editor-surface table {
+  width: 100%;
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+}
+
+.visual-editor-surface th,
+.visual-editor-surface td {
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  padding: 0.55rem 0.7rem;
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.visual-editor-surface th {
+  background: #f6f6f6;
+  font-weight: 700;
 }
 
 .markdown-editor-surface {

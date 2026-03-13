@@ -160,6 +160,34 @@ function serializeBlock(node) {
       const code = element.textContent || "";
       return `\`\`\`\n${code.replace(/\n$/, "")}\n\`\`\`\n\n`;
     }
+    case "TABLE": {
+      const rows = Array.from(element.querySelectorAll("tr"));
+      if (rows.length === 0) {
+        return "";
+      }
+
+      const serializedRows = rows
+        .map((row) =>
+          Array.from(row.children)
+            .filter((cell) => ["TH", "TD"].includes(cell.tagName))
+            .map((cell) => Array.from(cell.childNodes).map(serializeInline).join("").trim())
+        )
+        .filter((cells) => cells.length > 0);
+
+      if (serializedRows.length === 0) {
+        return "";
+      }
+
+      const headerCells = serializedRows[0];
+      const separator = headerCells.map(() => "---");
+      const lines = [
+        `| ${headerCells.join(" | ")} |`,
+        `| ${separator.join(" | ")} |`,
+        ...serializedRows.slice(1).map((cells) => `| ${cells.join(" | ")} |`)
+      ];
+
+      return `${lines.join("\n")}\n\n`;
+    }
     case "P":
     case "DIV":
       return inlineText ? `${inlineText}\n\n` : "";
@@ -490,6 +518,26 @@ function renderInlineMarkdown(text) {
     .replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s).,!?:;])/g, "$1<em>$2</em>");
 }
 
+function parseTableRow(line) {
+  const trimmed = line.trim();
+  if (!trimmed.includes("|")) {
+    return null;
+  }
+
+  const normalized = trimmed.replace(/^\|/, "").replace(/\|$/, "");
+  const cells = normalized.split("|").map((cell) => cell.trim());
+  return cells.length > 1 ? cells : null;
+}
+
+function isTableSeparatorRow(line, expectedColumns) {
+  const cells = parseTableRow(line);
+  if (!cells || cells.length !== expectedColumns) {
+    return false;
+  }
+
+  return cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
 function renderMarkdownBodyToHtml(markdown) {
   const lines = markdown.split("\n");
   const output = [];
@@ -511,7 +559,8 @@ function renderMarkdownBodyToHtml(markdown) {
     }
   }
 
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     if (line.startsWith("```")) {
       flushParagraph();
       closeList();
@@ -528,6 +577,43 @@ function renderMarkdownBodyToHtml(markdown) {
     if (!line.trim()) {
       flushParagraph();
       closeList();
+      continue;
+    }
+
+    const headerCells = parseTableRow(line);
+    if (
+      headerCells &&
+      index + 1 < lines.length &&
+      isTableSeparatorRow(lines[index + 1], headerCells.length)
+    ) {
+      flushParagraph();
+      closeList();
+
+      const bodyRows = [];
+      index += 2;
+      while (index < lines.length) {
+        const rowCells = parseTableRow(lines[index]);
+        if (!rowCells || rowCells.length !== headerCells.length) {
+          index -= 1;
+          break;
+        }
+        bodyRows.push(rowCells);
+        index += 1;
+      }
+
+      const headHtml = `<thead><tr>${headerCells
+        .map((cell) => `<th>${renderInlineMarkdown(cell)}</th>`)
+        .join("")}</tr></thead>`;
+      const bodyHtml = bodyRows.length
+        ? `<tbody>${bodyRows
+            .map(
+              (row) =>
+                `<tr>${row.map((cell) => `<td>${renderInlineMarkdown(cell)}</td>`).join("")}</tr>`
+            )
+            .join("")}</tbody>`
+        : "";
+
+      output.push(`<table>${headHtml}${bodyHtml}</table>`);
       continue;
     }
 
@@ -708,6 +794,60 @@ function currentTaskItem(rootElement) {
   }
 
   return block.classList?.contains("task-item") ? block : block.closest?.(".task-item") || null;
+}
+
+function currentTableRow(rootElement) {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !rootElement) {
+    return null;
+  }
+
+  let node = selection.anchorNode;
+  while (node && node !== rootElement) {
+    if (node.nodeType === Node.ELEMENT_NODE && node.tagName === "TR") {
+      return node;
+    }
+    node = node.parentNode;
+  }
+
+  return null;
+}
+
+function currentTableElement(rootElement) {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !rootElement) {
+    return null;
+  }
+
+  let node = selection.anchorNode;
+  while (node && node !== rootElement) {
+    if (node.nodeType === Node.ELEMENT_NODE && node.tagName === "TABLE") {
+      return node;
+    }
+    node = node.parentNode;
+  }
+
+  return null;
+}
+
+function ensureTrailingEditableParagraph(rootElement) {
+  if (!rootElement) {
+    return;
+  }
+
+  const lastElement = rootElement.lastElementChild;
+  if (!lastElement) {
+    rootElement.innerHTML = "<p><br></p>";
+    return;
+  }
+
+  if (
+    ["TABLE", "UL", "OL", "PRE", "BLOCKQUOTE", "H1", "H2", "H3"].includes(lastElement.tagName)
+  ) {
+    const paragraph = document.createElement("p");
+    paragraph.appendChild(document.createElement("br"));
+    rootElement.appendChild(paragraph);
+  }
 }
 
 function isEmptyStructuredItem(block) {
@@ -918,6 +1058,7 @@ export default function NotePage() {
   const [loaded, setLoaded] = useState(false);
   const [editorMode, setEditorMode] = useState("visual");
   const [floatingToolsOpen, setFloatingToolsOpen] = useState(false);
+  const [tableToolsOpen, setTableToolsOpen] = useState(false);
   const [floatingToolsCorner, setFloatingToolsCorner] = useState("bottom-right");
   const [floatingToolsDragPosition, setFloatingToolsDragPosition] = useState(null);
   const [keyboardInset, setKeyboardInset] = useState(0);
@@ -955,6 +1096,7 @@ export default function NotePage() {
       return;
     }
     editor.innerHTML = nextHtml || "<p></p>";
+    ensureTrailingEditableParagraph(editor);
     normalizeLinkTargets(editor);
     normalizeInlineCaretBoundaries(editor);
   }
@@ -1828,7 +1970,13 @@ export default function NotePage() {
     drag.pointerId = null;
 
     if (!drag.moved) {
-      setFloatingToolsOpen((value) => !value);
+      setFloatingToolsOpen((value) => {
+        const nextValue = !value;
+        if (!nextValue) {
+          setTableToolsOpen(false);
+        }
+        return nextValue;
+      });
       setFloatingToolsDragPosition(null);
       return;
     }
@@ -1850,6 +1998,7 @@ export default function NotePage() {
     }
     document.execCommand(command, false);
     handleVisualInput();
+    setTableToolsOpen(false);
     setFloatingToolsOpen(false);
   }
 
@@ -1923,6 +2072,280 @@ export default function NotePage() {
 
     placeCaretAtStart(item);
     handleVisualInput({ skipRevert: true });
+    setFloatingToolsOpen(false);
+  }
+
+  function appendTableRowBelow() {
+    if (editorMode !== "visual" || !visualEditorRef.current) {
+      return;
+    }
+    if (!ensureEditorSelection()) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const editor = visualEditorRef.current;
+    const currentRow = currentTableRow(editor);
+    if (!currentRow) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const cellCount = Array.from(currentRow.children).filter((cell) =>
+      ["TH", "TD"].includes(cell.tagName)
+    ).length;
+    if (cellCount === 0) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const parentSection = currentRow.parentNode;
+    const table = currentRow.closest("table");
+    const nextRow = document.createElement("tr");
+    for (let index = 0; index < cellCount; index += 1) {
+      const cell = document.createElement("td");
+      cell.appendChild(document.createElement("br"));
+      nextRow.appendChild(cell);
+    }
+
+    if (parentSection?.tagName === "THEAD" && table) {
+      let tbody = table.querySelector("tbody");
+      if (!tbody) {
+        tbody = document.createElement("tbody");
+        table.appendChild(tbody);
+      }
+      tbody.insertBefore(nextRow, tbody.firstChild);
+    } else {
+      currentRow.insertAdjacentElement("afterend", nextRow);
+    }
+
+    placeCaretAtStart(nextRow.children[0]);
+    handleVisualInput();
+    setFloatingToolsOpen(false);
+  }
+
+  function createTableAtEmptyLine() {
+    if (editorMode !== "visual" || !visualEditorRef.current) {
+      return;
+    }
+    if (!ensureEditorSelection()) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const editor = visualEditorRef.current;
+    const currentBlock = currentBlockElement(editor);
+    if (!currentBlock || !isEffectivelyEmptyBlock(currentBlock)) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const table = document.createElement("table");
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    const headCellOne = document.createElement("th");
+    const headCellTwo = document.createElement("th");
+    headCellOne.appendChild(document.createElement("br"));
+    headCellTwo.appendChild(document.createElement("br"));
+    headRow.appendChild(headCellOne);
+    headRow.appendChild(headCellTwo);
+    thead.appendChild(headRow);
+
+    const tbody = document.createElement("tbody");
+    const bodyRow = document.createElement("tr");
+    const bodyCellOne = document.createElement("td");
+    const bodyCellTwo = document.createElement("td");
+    bodyCellOne.appendChild(document.createElement("br"));
+    bodyCellTwo.appendChild(document.createElement("br"));
+    bodyRow.appendChild(bodyCellOne);
+    bodyRow.appendChild(bodyCellTwo);
+    tbody.appendChild(bodyRow);
+
+    table.appendChild(thead);
+    table.appendChild(tbody);
+    currentBlock.parentNode?.replaceChild(table, currentBlock);
+
+    placeCaretAtStart(headCellOne);
+    handleVisualInput();
+    setTableToolsOpen(false);
+    setFloatingToolsOpen(false);
+  }
+
+  function appendTableColumnRight() {
+    if (editorMode !== "visual" || !visualEditorRef.current) {
+      return;
+    }
+    if (!ensureEditorSelection()) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const editor = visualEditorRef.current;
+    const table = currentTableElement(editor);
+    if (!table) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const currentRow = currentTableRow(editor);
+    let targetColumnIndex = -1;
+    if (currentRow) {
+      const selection = window.getSelection();
+      const anchorNode = selection?.anchorNode || null;
+      const currentCell = anchorNode?.nodeType === Node.ELEMENT_NODE
+        ? anchorNode.closest?.("td, th")
+        : anchorNode?.parentNode?.closest?.("td, th");
+      if (currentCell) {
+        targetColumnIndex = Array.from(currentRow.children).indexOf(currentCell);
+      }
+    }
+
+    const rows = Array.from(table.querySelectorAll("tr"));
+    if (rows.length === 0) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    rows.forEach((row) => {
+      const cells = Array.from(row.children).filter((cell) => ["TH", "TD"].includes(cell.tagName));
+      const insertAfterIndex = targetColumnIndex >= 0 ? targetColumnIndex : cells.length - 1;
+      const referenceCell = cells[insertAfterIndex] || null;
+      const newCell = document.createElement(row.parentNode?.tagName === "THEAD" ? "th" : "td");
+      newCell.appendChild(document.createElement("br"));
+      if (referenceCell) {
+        referenceCell.insertAdjacentElement("afterend", newCell);
+      } else {
+        row.appendChild(newCell);
+      }
+    });
+
+    const focusRow = currentTableRow(editor) || rows[0];
+    const focusCells = Array.from(focusRow.children).filter((cell) => ["TH", "TD"].includes(cell.tagName));
+    const nextFocusCell = focusCells[Math.max(0, targetColumnIndex + 1)] || focusCells[focusCells.length - 1];
+    if (nextFocusCell) {
+      placeCaretAtStart(nextFocusCell);
+    }
+    handleVisualInput();
+    setTableToolsOpen(false);
+    setFloatingToolsOpen(false);
+  }
+
+  function deleteCurrentTableRow() {
+    if (editorMode !== "visual" || !visualEditorRef.current) {
+      return;
+    }
+    if (!ensureEditorSelection()) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const editor = visualEditorRef.current;
+    const currentRow = currentTableRow(editor);
+    const table = currentTableElement(editor);
+    if (!currentRow || !table) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const allRows = Array.from(table.querySelectorAll("tr"));
+    if (allRows.length <= 1) {
+      const paragraph = document.createElement("p");
+      paragraph.appendChild(document.createElement("br"));
+      table.replaceWith(paragraph);
+      placeCaretAtStart(paragraph);
+      handleVisualInput();
+      setTableToolsOpen(false);
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const nextRow =
+      currentRow.nextElementSibling?.tagName === "TR"
+        ? currentRow.nextElementSibling
+        : currentRow.previousElementSibling?.tagName === "TR"
+          ? currentRow.previousElementSibling
+          : null;
+
+    const parentSection = currentRow.parentNode;
+    currentRow.remove();
+
+    if (parentSection?.tagName === "THEAD" && table.querySelectorAll("thead tr").length === 0) {
+      parentSection.remove();
+    }
+    if (parentSection?.tagName === "TBODY" && parentSection.querySelectorAll("tr").length === 0) {
+      parentSection.remove();
+    }
+
+    if (nextRow) {
+      const nextCell = nextRow.querySelector("th, td");
+      if (nextCell) {
+        placeCaretAtStart(nextCell);
+      }
+    }
+
+    handleVisualInput();
+    setTableToolsOpen(false);
+    setFloatingToolsOpen(false);
+  }
+
+  function deleteCurrentTableColumn() {
+    if (editorMode !== "visual" || !visualEditorRef.current) {
+      return;
+    }
+    if (!ensureEditorSelection()) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const editor = visualEditorRef.current;
+    const table = currentTableElement(editor);
+    const currentRow = currentTableRow(editor);
+    if (!table || !currentRow) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const selection = window.getSelection();
+    const anchorNode = selection?.anchorNode || null;
+    const currentCell =
+      anchorNode?.nodeType === Node.ELEMENT_NODE
+        ? anchorNode.closest?.("td, th")
+        : anchorNode?.parentNode?.closest?.("td, th");
+    const currentCells = Array.from(currentRow.children).filter((cell) => ["TH", "TD"].includes(cell.tagName));
+    const targetColumnIndex = currentCell ? currentCells.indexOf(currentCell) : -1;
+    if (targetColumnIndex < 0) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    if (currentCells.length <= 1) {
+      const paragraph = document.createElement("p");
+      paragraph.appendChild(document.createElement("br"));
+      table.replaceWith(paragraph);
+      placeCaretAtStart(paragraph);
+      handleVisualInput();
+      setTableToolsOpen(false);
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    Array.from(table.querySelectorAll("tr")).forEach((row) => {
+      const cells = Array.from(row.children).filter((cell) => ["TH", "TD"].includes(cell.tagName));
+      const cellToRemove = cells[targetColumnIndex];
+      cellToRemove?.remove();
+    });
+
+    const focusRow = currentTableRow(editor) || table.querySelector("tr");
+    const focusCells = focusRow
+      ? Array.from(focusRow.children).filter((cell) => ["TH", "TD"].includes(cell.tagName))
+      : [];
+    const nextFocusCell = focusCells[Math.max(0, targetColumnIndex - 1)] || focusCells[0];
+    if (nextFocusCell) {
+      placeCaretAtStart(nextFocusCell);
+    }
+
+    handleVisualInput();
+    setTableToolsOpen(false);
     setFloatingToolsOpen(false);
   }
 
@@ -2223,6 +2646,26 @@ export default function NotePage() {
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={(event) => event.stopPropagation()}
               >
+                {tableToolsOpen ? (
+                  <>
+                    <button type="button" className="toolbar-button" aria-label="Create table" title="Create table" onPointerDown={handleToolbarPointerDown} onClick={createTableAtEmptyLine}>
+                      <img src="/svg/table_addition.svg" alt="" aria-hidden="true" width="18" height="18" />
+                    </button>
+                    <button type="button" className="toolbar-button" aria-label="Append row below" title="Append row below" onPointerDown={handleToolbarPointerDown} onClick={appendTableRowBelow}>
+                      <img src="/svg/row_addition.svg" alt="" aria-hidden="true" width="18" height="18" />
+                    </button>
+                    <button type="button" className="toolbar-button" aria-label="Append column right" title="Append column right" onPointerDown={handleToolbarPointerDown} onClick={appendTableColumnRight}>
+                      <img src="/svg/column_addition.svg" alt="" aria-hidden="true" width="18" height="18" />
+                    </button>
+                    <button type="button" className="toolbar-button" aria-label="Delete current row" title="Delete current row" onPointerDown={handleToolbarPointerDown} onClick={deleteCurrentTableRow}>
+                      <img src="/svg/row_deletion.svg" alt="" aria-hidden="true" width="18" height="18" />
+                    </button>
+                    <button type="button" className="toolbar-button" aria-label="Delete current column" title="Delete current column" onPointerDown={handleToolbarPointerDown} onClick={deleteCurrentTableColumn}>
+                      <img src="/svg/column_deletion.svg" alt="" aria-hidden="true" width="18" height="18" />
+                    </button>
+                  </>
+                ) : (
+                  <>
                 <button type="button" className="toolbar-button" aria-label="List" title="List" onPointerDown={handleToolbarPointerDown} onClick={insertBullet}>
                   <img src="/svg/bullet.svg" alt="" aria-hidden="true" width="18" height="18" />
                 </button>
@@ -2231,6 +2674,16 @@ export default function NotePage() {
                 </button>
                 <button type="button" className="toolbar-button" aria-label="Checkbox" title="Checkbox" onPointerDown={handleToolbarPointerDown} onClick={insertCheckbox}>
                   <img src="/svg/checkbox.svg" alt="" aria-hidden="true" width="18" height="18" />
+                </button>
+                <button
+                  type="button"
+                  className="toolbar-button"
+                  aria-label="Table tools"
+                  title="Table tools"
+                  onPointerDown={handleToolbarPointerDown}
+                  onClick={() => setTableToolsOpen(true)}
+                >
+                  <img src="/svg/table.svg" alt="" aria-hidden="true" width="18" height="18" />
                 </button>
                 <button type="button" className="toolbar-button" aria-label="Bold" title="Bold" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("bold")}>
                   <img src="/svg/bold.svg" alt="" aria-hidden="true" width="18" height="18" />
@@ -2262,6 +2715,8 @@ export default function NotePage() {
                 <button type="button" className="toolbar-button" aria-label="Block" title="Block" onPointerDown={handleToolbarPointerDown} onClick={insertCodeBlock} style={{ display: "none" }}>
                   🧱
                 </button>
+                  </>
+                )}
               </aside>
             ) : null}
           </>

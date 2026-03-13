@@ -285,6 +285,26 @@ function inlineMarkdown(text) {
   return result;
 }
 
+function parseTableRow(line) {
+  const trimmed = line.trim();
+  if (!trimmed.includes("|")) {
+    return null;
+  }
+
+  const normalized = trimmed.replace(/^\|/, "").replace(/\|$/, "");
+  const cells = normalized.split("|").map((cell) => cell.trim());
+  return cells.length > 1 ? cells : null;
+}
+
+function isTableSeparatorRow(line, expectedColumns) {
+  const cells = parseTableRow(line);
+  if (!cells || cells.length !== expectedColumns) {
+    return false;
+  }
+
+  return cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
 function parseFrontmatter(markdown) {
   const normalized = markdown.replace(/\r/g, "");
   if (!normalized.startsWith("---\n")) {
@@ -448,7 +468,8 @@ function markdownToHtml(markdown) {
     }
   }
 
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     if (line.startsWith("```")) {
       flushParagraph();
       closeList();
@@ -465,6 +486,43 @@ function markdownToHtml(markdown) {
     if (!line.trim()) {
       flushParagraph();
       closeList();
+      continue;
+    }
+
+    const headerCells = parseTableRow(line);
+    if (
+      headerCells &&
+      index + 1 < lines.length &&
+      isTableSeparatorRow(lines[index + 1], headerCells.length)
+    ) {
+      flushParagraph();
+      closeList();
+
+      const bodyRows = [];
+      index += 2;
+      while (index < lines.length) {
+        const rowCells = parseTableRow(lines[index]);
+        if (!rowCells || rowCells.length !== headerCells.length) {
+          index -= 1;
+          break;
+        }
+        bodyRows.push(rowCells);
+        index += 1;
+      }
+
+      const headHtml = `<thead><tr>${headerCells
+        .map((cell) => `<th>${inlineMarkdown(cell)}</th>`)
+        .join("")}</tr></thead>`;
+      const bodyHtml = bodyRows.length
+        ? `<tbody>${bodyRows
+            .map(
+              (row) =>
+                `<tr>${row.map((cell) => `<td>${inlineMarkdown(cell)}</td>`).join("")}</tr>`
+            )
+            .join("")}</tbody>`
+        : "";
+
+      output.push(`<table>${headHtml}${bodyHtml}</table>`);
       continue;
     }
 
