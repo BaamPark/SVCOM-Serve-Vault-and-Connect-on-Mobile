@@ -929,6 +929,7 @@ export default function NotePage() {
   const visualEditorRef = useRef(null);
   const markdownEditorRef = useRef(null);
   const savedSelectionRef = useRef(null);
+  const lastSyncedContentRef = useRef("");
   const lastKeyboardInsetRef = useRef(0);
   const floatingDragRef = useRef({
     active: false,
@@ -1193,6 +1194,7 @@ export default function NotePage() {
       const parsed = parseFrontmatter(contentToSave);
       setMarkdownContent(parsed.body);
       setRawMarkdownContent(contentToSave);
+      lastSyncedContentRef.current = contentToSave;
       setProperties(payload.properties || []);
       if (syncVisual) {
         setVisualHtml(payload.bodyHtml || payload.html);
@@ -1245,6 +1247,7 @@ export default function NotePage() {
         const parsed = parseFrontmatter(notePayload.content);
         setMarkdownContent(parsed.body);
         setRawMarkdownContent(notePayload.content);
+        lastSyncedContentRef.current = notePayload.content;
         setProperties(notePayload.properties || parsed.properties);
         setVisualHtml(notePayload.bodyHtml || notePayload.html);
         setStatus("Live sync connected");
@@ -1366,6 +1369,7 @@ export default function NotePage() {
           const parsed = parseFrontmatter(nextNote.content);
           setMarkdownContent(parsed.body);
           setRawMarkdownContent(nextNote.content);
+          lastSyncedContentRef.current = nextNote.content;
           setProperties(nextNote.properties || parsed.properties);
           setVisualHtml(nextNote.bodyHtml || nextNote.html);
           if (editorMode === "visual") {
@@ -1385,6 +1389,42 @@ export default function NotePage() {
       eventSourceRef.current = null;
     };
   }, [editorMode, loaded, notePath, router]);
+
+  useEffect(() => {
+    if (!loaded || !notePath) {
+      return;
+    }
+
+    const intervalId = window.setInterval(async () => {
+      if (dirtyRef.current || pendingSaveRef.current) {
+        return;
+      }
+
+      try {
+        const nextNote = await api(`/api/note?path=${encodeURIComponent(notePath)}`);
+        if (nextNote.content === lastSyncedContentRef.current) {
+          return;
+        }
+
+        const parsed = parseFrontmatter(nextNote.content);
+        setMarkdownContent(parsed.body);
+        setRawMarkdownContent(nextNote.content);
+        lastSyncedContentRef.current = nextNote.content;
+        setProperties(nextNote.properties || parsed.properties);
+        setVisualHtml(nextNote.bodyHtml || nextNote.html);
+        if (editorMode === "visual") {
+          syncVisualEditor(nextNote.bodyHtml || nextNote.html);
+        }
+        setStatus("Live sync connected");
+      } catch {
+        setStatus("Live sync reconnecting...");
+      }
+    }, 1800);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [editorMode, loaded, notePath]);
 
   useEffect(() => {
     if (!loaded || !notePath || !dirtyRef.current) {
