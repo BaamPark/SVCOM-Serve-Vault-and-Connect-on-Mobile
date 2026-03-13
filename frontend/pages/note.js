@@ -207,6 +207,84 @@ function normalizeInlineCaretBoundaries(rootElement) {
   });
 }
 
+function isInlineFormattingElement(element) {
+  return Boolean(
+    element &&
+    element.nodeType === Node.ELEMENT_NODE &&
+    ["STRONG", "B", "EM", "I", "MARK", "DEL", "S", "STRIKE", "A", "CODE"].includes(element.tagName) &&
+    !(element.tagName === "CODE" && element.closest("pre"))
+  );
+}
+
+function endOfNodeRange(node) {
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  range.collapse(false);
+  return range;
+}
+
+function routeTypingOutsideInlineWrapper(rootElement, text) {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !text) {
+    return false;
+  }
+
+  const range = selection.getRangeAt(0);
+  if (!range.collapsed || !rootElement.contains(range.startContainer)) {
+    return false;
+  }
+
+  let node = range.startContainer;
+  let inlineAncestor = null;
+
+  if (node.nodeType === Node.TEXT_NODE && (node.textContent || "").includes("\u200b")) {
+    const insertionOffset = range.startOffset;
+    const nextText = `${node.textContent.slice(0, insertionOffset)}${text}${node.textContent.slice(insertionOffset)}`;
+    node.textContent = nextText;
+    const nextRange = document.createRange();
+    nextRange.setStart(node, insertionOffset + text.length);
+    nextRange.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(nextRange);
+    return true;
+  }
+
+  if (node.nodeType === Node.TEXT_NODE) {
+    node = node.parentNode;
+  }
+
+  while (node && node !== rootElement) {
+    if (isInlineFormattingElement(node)) {
+      inlineAncestor = node;
+      break;
+    }
+    node = node.parentNode;
+  }
+
+  if (!inlineAncestor) {
+    return false;
+  }
+
+  const inlineEnd = endOfNodeRange(inlineAncestor);
+  if (range.compareBoundaryPoints(Range.START_TO_START, inlineEnd) !== 0) {
+    return false;
+  }
+
+  let spacer = inlineAncestor.nextSibling;
+  if (!(spacer && spacer.nodeType === Node.TEXT_NODE && (spacer.textContent || "").startsWith("\u200b"))) {
+    spacer = document.createTextNode("\u200b");
+    inlineAncestor.parentNode.insertBefore(spacer, inlineAncestor.nextSibling);
+  }
+
+  spacer.textContent = `\u200b${text}${(spacer.textContent || "").replace(/\u200b/g, "")}`;
+  const nextRange = document.createRange();
+  nextRange.setStart(spacer, 1 + text.length);
+  nextRange.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(nextRange);
+  return true;
+}
+
 function syncTaskItemState(taskItem) {
   if (!taskItem) {
     return;
@@ -1007,6 +1085,16 @@ export default function NotePage() {
       return false;
     }
 
+    document.execCommand("removeFormat", false);
+    document.execCommand("unlink", false);
+
+    const refreshedRange = currentEditorRange();
+    if (refreshedRange && !refreshedRange.collapsed) {
+      handleVisualInput();
+      setFloatingToolsOpen(false);
+      return true;
+    }
+
     const plainText = range.toString();
     const startAncestor = closestInlineFormatAncestor(range.startContainer);
     const endAncestor = closestInlineFormatAncestor(range.endContainer);
@@ -1451,7 +1539,19 @@ export default function NotePage() {
   }
 
   function handleVisualBeforeInput(event) {
-    if (event.inputType !== "deleteContentBackward" || !visualEditorRef.current) {
+    if (!visualEditorRef.current) {
+      return;
+    }
+
+    if (event.inputType === "insertText" && event.data) {
+      if (routeTypingOutsideInlineWrapper(visualEditorRef.current, event.data)) {
+        event.preventDefault();
+        handleVisualInput();
+      }
+      return;
+    }
+
+    if (event.inputType !== "deleteContentBackward") {
       return;
     }
 
