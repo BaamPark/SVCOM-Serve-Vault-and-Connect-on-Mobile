@@ -46,6 +46,63 @@ function flattenNotes(node, results = []) {
   return results;
 }
 
+function NoteSidebarTreeNode({ node, currentPath, onOpenNote, depth = 0 }) {
+  if (node.type === "note") {
+    const isCurrent = node.path === currentPath;
+    return (
+      <article className={isCurrent ? "tree-note-row tree-note-row-current" : "tree-note-row"}>
+        <button type="button" className="tree-note-main" onClick={() => onOpenNote(node.path)}>
+          <strong>{node.name}</strong>
+          <span>{node.path}</span>
+        </button>
+      </article>
+    );
+  }
+
+  const defaultOpen =
+    node.path === "" ||
+    currentPath === node.path ||
+    currentPath.startsWith(`${node.path}/`);
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+
+  useEffect(() => {
+    if (defaultOpen) {
+      setIsOpen(true);
+    }
+  }, [defaultOpen]);
+
+  return (
+    <section className="tree-folder">
+      {node.path ? (
+        <button
+          type="button"
+          className="tree-folder-toggle"
+          onClick={() => setIsOpen((value) => !value)}
+        >
+          <span className="tree-folder-caret">{isOpen ? "▾" : "▸"}</span>
+          <span className="tree-folder-label">{node.name}</span>
+        </button>
+      ) : null}
+      {isOpen ? (
+        <div
+          className="tree-folder-children"
+          style={{ paddingLeft: node.path ? "0.9rem" : undefined }}
+        >
+          {(node.children || []).map((child) => (
+            <NoteSidebarTreeNode
+              key={child.path || child.name}
+              node={child}
+              currentPath={currentPath}
+              depth={node.path ? depth + 1 : depth}
+              onOpenNote={onOpenNote}
+            />
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function escapeHtml(value) {
   return value
     .replaceAll("&", "&amp;")
@@ -1095,6 +1152,7 @@ export default function NotePage() {
   const [status, setStatus] = useState("Connecting...");
   const [loaded, setLoaded] = useState(false);
   const [editorMode, setEditorMode] = useState("visual");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [floatingToolsOpen, setFloatingToolsOpen] = useState(false);
   const [tableToolsOpen, setTableToolsOpen] = useState(false);
   const [floatingToolsCorner, setFloatingToolsCorner] = useState("bottom-right");
@@ -2526,6 +2584,16 @@ export default function NotePage() {
       return;
     }
 
+    const externalLink = event.target.closest('a[href]:not([data-note-link])');
+    if (externalLink) {
+      event.preventDefault();
+      const href = externalLink.getAttribute("href");
+      if (href) {
+        window.open(href, "_blank", "noopener,noreferrer");
+      }
+      return;
+    }
+
     const noteLink = event.target.closest("[data-note-link]");
     if (!noteLink || !tree) {
       return;
@@ -2701,15 +2769,55 @@ export default function NotePage() {
     );
   }
 
+  function openNoteFromSidebar(nextPath) {
+    setSidebarOpen(false);
+    if (!nextPath || nextPath === notePath) {
+      return;
+    }
+    router.push(`/note?path=${encodeURIComponent(nextPath)}`);
+  }
+
   return (
     <>
       <Head>
         <title>{noteTitle()}</title>
       </Head>
 <section className="note-mobile-screen">
+        {sidebarOpen ? (
+          <>
+            <div className="note-sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
+            <aside className="note-sidebar-drawer">
+              <div className="note-sidebar-header">
+                <h2>Notes</h2>
+              </div>
+              {tree ? (
+                <div className="tree-view note-sidebar-tree">
+                  <NoteSidebarTreeNode
+                    node={tree}
+                    currentPath={notePath}
+                    onOpenNote={openNoteFromSidebar}
+                  />
+                </div>
+              ) : null}
+            </aside>
+          </>
+        ) : null}
         <header className="note-mobile-header">
           <div className="note-header-toprow">
-            <Link href="/app" className="icon-button">Back</Link>
+            <div className="note-header-left">
+              <Link href="/app" className="icon-button" aria-label="Back to notes" title="Back to notes">
+                <img src="/svg/homepage.svg" alt="" aria-hidden="true" width="18" height="18" />
+              </Link>
+              <button
+                type="button"
+                className="icon-button note-sidebar-toggle"
+                onClick={() => setSidebarOpen((value) => !value)}
+                aria-label="Open note sidebar"
+                title="Open note sidebar"
+              >
+                <img src="/svg/sidebar.svg" alt="" aria-hidden="true" width="18" height="18" />
+              </button>
+            </div>
             <div className="note-header-actions">
               {editorMode === "markdown" ? (
                 <>

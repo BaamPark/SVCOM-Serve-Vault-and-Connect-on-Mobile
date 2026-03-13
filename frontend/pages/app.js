@@ -111,7 +111,7 @@ export default function AppPage() {
   const [allNotes, setAllNotes] = useState([]);
   const [results, setResults] = useState([]);
   const [searchMode, setSearchMode] = useState(false);
-  const [viewMode, setViewMode] = useState("list");
+  const [viewMode, setViewMode] = useState("tree");
 
   useEffect(() => {
     let active = true;
@@ -297,17 +297,17 @@ export default function AppPage() {
             <div className="view-toggle-row">
               <button
                 type="button"
-                className={viewMode === "list" ? "chip-button active" : "chip-button"}
-                onClick={() => setViewMode("list")}
-              >
-                List
-              </button>
-              <button
-                type="button"
                 className={viewMode === "tree" ? "chip-button active" : "chip-button"}
                 onClick={() => setViewMode("tree")}
               >
                 Tree
+              </button>
+              <button
+                type="button"
+                className={viewMode === "list" ? "chip-button active" : "chip-button"}
+                onClick={() => setViewMode("list")}
+              >
+                List
               </button>
             </div>
           ) : null}

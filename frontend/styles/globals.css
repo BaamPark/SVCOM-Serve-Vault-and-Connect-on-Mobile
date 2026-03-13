@@ -103,6 +103,8 @@ a {
 .login-card {
   width: min(100%, 440px);
   padding: 1.5rem;
+  display: grid;
+  gap: 1rem;
 }
 
 .login-card h1,
@@ -254,6 +256,11 @@ a {
   padding: 0.05rem 0;
 }
 
+.tree-note-row-current {
+  border-color: rgba(37, 99, 235, 0.28);
+  background: #eff6ff;
+}
+
 .result-item {
   display: flex;
   align-items: center;
@@ -341,6 +348,12 @@ a {
   gap: 0.9rem;
 }
 
+.note-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
 .note-header-copy h1 {
   margin: 0;
   font-size: 2rem;
@@ -353,6 +366,40 @@ a {
   color: #666666;
   font-size: 0.9rem;
   word-break: break-word;
+}
+
+.note-sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 24;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.note-sidebar-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 25;
+  width: min(84vw, 24rem);
+  padding: 1rem;
+  background: #ffffff;
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.14);
+  overflow-y: auto;
+}
+
+.note-sidebar-header {
+  margin-bottom: 0.9rem;
+}
+
+.note-sidebar-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.note-sidebar-tree {
+  margin-top: 0;
 }
 
 .note-header-actions {
@@ -520,7 +567,7 @@ a {
 }
 
 .visual-editor-surface a {
-  color: #0f766e;
+  color: #2563eb;
 }
 
 .visual-editor-surface .obsidian-tag {
