@@ -1,10 +1,16 @@
-# Obsidian Local Web
+# SVCOM: Serve Vault and Connect on Mobile
+
+Serve Vault Connect On Mobile.
 
 Separated frontend and backend for browser access to a local Obsidian vault, with direct file editing and live updates.
 
+## Architecture
+
+![SVCOM system architecture](images/architecture.png)
+
 ## Layout
 
-- `frontend/`: Next.js app running on port `3000`
+- `frontend/`: Next.js app running on port `3100`
 - `backend/`: Node.js vault API running on port `3210`
 - `docker-compose.yml`: two-container setup with the frontend proxying `/api` to the backend
 
@@ -15,7 +21,7 @@ Separated frontend and backend for browser access to a local Obsidian vault, wit
 - Password-protected access with a single configured password
 - Direct reads and writes against your existing vault files
 - Live update stream so browser content refreshes when the vault changes on disk
-- Markdown editor plus preview
+- Mobile-oriented note and markdown views
 - Note search, note create, note rename, and note delete
 - No SQL or NoSQL database required
 
