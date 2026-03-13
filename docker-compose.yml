@@ -10,7 +10,7 @@ services:
       APP_PASSWORD: ${APP_PASSWORD:-}
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-24}
     volumes:
-      - ${HOST_VAULT_PATH:-./test_vault}:/vault
+      - ${VAULT_PATH:-./new_vault}:/vault
     expose:
       - "3210"
 

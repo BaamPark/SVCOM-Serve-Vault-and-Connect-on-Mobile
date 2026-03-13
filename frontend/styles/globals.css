@@ -375,6 +375,14 @@ a {
   color: #ffffff;
 }
 
+.mode-toggle-button img {
+  display: block;
+}
+
+.mode-toggle-button.active img {
+  filter: brightness(0) invert(1);
+}
+
 .danger-lite {
   color: #b42318;
 }
@@ -584,10 +592,18 @@ a {
 .floating-tools-panel .toolbar-button {
   flex: 0 0 auto;
   justify-content: center;
+  min-width: 3rem;
+  min-height: 3rem;
+  padding: 0.7rem 0.95rem;
 }
 
 .toolbar-button {
   flex: 0 0 auto;
+}
+
+.floating-tools-panel .toolbar-button img {
+  width: 20px;
+  height: 20px;
 }
 
 [data-inline-trigger="true"] {

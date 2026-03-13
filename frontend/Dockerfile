@@ -10,10 +10,11 @@ RUN npm install
 
 COPY next.config.js ./
 COPY pages ./pages
+COPY public ./public
 COPY styles ./styles
 
 RUN npm run build
 
-EXPOSE 3000
+EXPOSE 3100
 
 CMD ["npm", "start"]

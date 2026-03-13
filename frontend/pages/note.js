@@ -1438,6 +1438,21 @@ export default function NotePage() {
     setEditorMode(nextMode);
   }
 
+  function rerenderNotePreview() {
+    const nextBodyMarkdown =
+      editorMode === "visual" && visualEditorRef.current
+        ? htmlToMarkdown(visualEditorRef.current)
+        : markdownContent;
+    const nextHtml = renderMarkdownBodyToHtml(nextBodyMarkdown);
+    setMarkdownContent(nextBodyMarkdown);
+    setRawMarkdownContent(composeNoteMarkdown(properties, nextBodyMarkdown));
+    setVisualHtml(nextHtml);
+    if (editorMode === "visual") {
+      syncVisualEditor(nextHtml);
+    }
+    setStatus("Preview refreshed");
+  }
+
   function handleVisualInput() {
     if (!visualEditorRef.current) {
       return;
@@ -2025,7 +2040,7 @@ export default function NotePage() {
                     aria-label="Undo"
                     title="Undo"
                   >
-                    ↩
+                    <img src="/svg/undo.svg" alt="" aria-hidden="true" width="18" height="18" />
                   </button>
                   <button
                     type="button"
@@ -2034,23 +2049,51 @@ export default function NotePage() {
                     aria-label="Redo"
                     title="Redo"
                   >
-                    ↪
+                    <img src="/svg/redo.svg" alt="" aria-hidden="true" width="18" height="18" />
                   </button>
                 </>
               ) : null}
+              {editorMode === "visual" ? (
+                <>
+                  <button
+                    type="button"
+                    className="chip-button"
+                    onClick={() => runHistoryCommand("undo")}
+                    aria-label="Undo"
+                    title="Undo"
+                  >
+                    <img src="/svg/undo.svg" alt="" aria-hidden="true" width="18" height="18" />
+                  </button>
+                  <button
+                    type="button"
+                    className="chip-button"
+                    onClick={() => runHistoryCommand("redo")}
+                    aria-label="Redo"
+                    title="Redo"
+                  >
+                    <img src="/svg/redo.svg" alt="" aria-hidden="true" width="18" height="18" />
+                  </button>
+                </>
+              ) : null}
+              {editorMode === "visual" ? (
+                <button
+                  type="button"
+                  className="chip-button"
+                  onClick={rerenderNotePreview}
+                  aria-label="Refresh preview"
+                  title="Refresh preview"
+                >
+                  <img src="/svg/refresh.svg" alt="" aria-hidden="true" width="18" height="18" />
+                </button>
+              ) : null}
               <button
                 type="button"
-                className={editorMode === "visual" ? "chip-button active" : "chip-button"}
-                onClick={() => void switchMode("visual")}
+                className={editorMode === "markdown" ? "chip-button mode-toggle-button active" : "chip-button mode-toggle-button"}
+                onClick={() => void switchMode(editorMode === "visual" ? "markdown" : "visual")}
+                aria-label={editorMode === "visual" ? "Switch to markdown view" : "Switch to note view"}
+                title={editorMode === "visual" ? "Switch to markdown view" : "Switch to note view"}
               >
-                Note
-              </button>
-              <button
-                type="button"
-                className={editorMode === "markdown" ? "chip-button active" : "chip-button"}
-                onClick={() => void switchMode("markdown")}
-              >
-                Md
+                <img src="/svg/source_mode.svg" alt="" aria-hidden="true" width="18" height="18" />
               </button>
             </div>
           </div>
@@ -2141,46 +2184,40 @@ export default function NotePage() {
                 onClick={(event) => event.stopPropagation()}
               >
                 <button type="button" className="toolbar-button" aria-label="List" title="List" onPointerDown={handleToolbarPointerDown} onClick={insertBullet}>
-                  •
+                  <img src="/svg/bullet.svg" alt="" aria-hidden="true" width="18" height="18" />
                 </button>
                 <button type="button" className="toolbar-button" aria-label="Ordered list" title="Ordered list" onPointerDown={handleToolbarPointerDown} onClick={insertOrderedList}>
-                  <span style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontWeight: 700 }}>1</span>
+                  <img src="/svg/number_list.svg" alt="" aria-hidden="true" width="18" height="18" />
                 </button>
                 <button type="button" className="toolbar-button" aria-label="Checkbox" title="Checkbox" onPointerDown={handleToolbarPointerDown} onClick={insertCheckbox}>
-                  ✅
+                  <img src="/svg/checkbox.svg" alt="" aria-hidden="true" width="18" height="18" />
                 </button>
                 <button type="button" className="toolbar-button" aria-label="Bold" title="Bold" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("bold")}>
-                  <span style={{ fontWeight: 700 }}>B</span>
+                  <img src="/svg/bold.svg" alt="" aria-hidden="true" width="18" height="18" />
                 </button>
                 <button type="button" className="toolbar-button" aria-label="Reformatter" title="Reformatter" onPointerDown={handleToolbarPointerDown} onClick={unwrapSelectionFormatting}>
-                  🧼
+                  <img src="/svg/format_remover.svg" alt="" aria-hidden="true" width="18" height="18" />
                 </button>
                 <button type="button" className="toolbar-button" aria-label="Highlight" title="Highlight" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("highlight")}>
-                  🖍️
+                  <img src="/svg/highlighter.svg" alt="" aria-hidden="true" width="18" height="18" />
                 </button>
                 <button type="button" className="toolbar-button" aria-label="Strikethrough" title="Strikethrough" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("strikeThrough")}>
-                  <span style={{ textDecoration: "line-through", fontWeight: 700 }}>S</span>
+                  <img src="/svg/strikethrough.svg" alt="" aria-hidden="true" width="18" height="18" />
                 </button>
                 <button type="button" className="toolbar-button" aria-label="Italic" title="Italic" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("italic")}>
-                  <span style={{ fontStyle: "italic", fontFamily: "Georgia, 'Times New Roman', serif" }}>I</span>
+                  <img src="/svg/italic.svg" alt="" aria-hidden="true" width="18" height="18" />
                 </button>
                 <button type="button" className="toolbar-button" aria-label="Code" title="Code" onPointerDown={handleToolbarPointerDown} onClick={insertInlineCode}>
-                  {"</>"}
+                  <img src="/svg/code.svg" alt="" aria-hidden="true" width="18" height="18" />
                 </button>
                 <button type="button" className="toolbar-button" aria-label="Heading 1" title="Heading 1" onPointerDown={handleToolbarPointerDown} onClick={() => applyHeadingCommand(1)}>
-                  H1
+                  <img src="/svg/header1.svg" alt="" aria-hidden="true" width="18" height="18" />
                 </button>
                 <button type="button" className="toolbar-button" aria-label="Heading 2" title="Heading 2" onPointerDown={handleToolbarPointerDown} onClick={() => applyHeadingCommand(2)}>
-                  H2
+                  <img src="/svg/header2.svg" alt="" aria-hidden="true" width="18" height="18" />
                 </button>
                 <button type="button" className="toolbar-button" aria-label="Heading 3" title="Heading 3" onPointerDown={handleToolbarPointerDown} onClick={() => applyHeadingCommand(3)}>
-                  H3
-                </button>
-                <button type="button" className="toolbar-button" aria-label="Undo" title="Undo" onPointerDown={handleToolbarPointerDown} onClick={() => runHistoryCommand("undo")}>
-                  ↩
-                </button>
-                <button type="button" className="toolbar-button" aria-label="Redo" title="Redo" onPointerDown={handleToolbarPointerDown} onClick={() => runHistoryCommand("redo")}>
-                  ↪
+                  <img src="/svg/header3.svg" alt="" aria-hidden="true" width="18" height="18" />
                 </button>
                 <button type="button" className="toolbar-button" aria-label="Block" title="Block" onPointerDown={handleToolbarPointerDown} onClick={insertCodeBlock} style={{ display: "none" }}>
                   🧱
