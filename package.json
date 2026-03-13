@@ -1,10 +1,13 @@
 {
   "name": "obsidian-local-web",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "Local web editor for an Obsidian vault",
   "scripts": {
-    "start": "node server.js",
-    "hash-password": "node server.js --hash-password"
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "start:backend": "npm --prefix backend run start",
+    "start:frontend": "npm --prefix frontend run start",
+    "build:frontend": "npm --prefix frontend run build",
+    "hash-password": "npm --prefix backend run hash-password --"
   }
 }

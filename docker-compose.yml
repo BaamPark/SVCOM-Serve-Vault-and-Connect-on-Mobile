@@ -1,0 +1,27 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 3210
+      VAULT_PATH: /vault
+      APP_PASSWORD_HASH: ${APP_PASSWORD_HASH:-}
+      APP_PASSWORD: ${APP_PASSWORD:-}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-24}
+    volumes:
+      - ${HOST_VAULT_PATH:-./test_vault}:/vault
+    expose:
+      - "3210"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        BACKEND_ORIGIN: http://backend:3210
+    depends_on:
+      - backend
+    environment:
+      BACKEND_ORIGIN: http://backend:3210
+    ports:
+      - "3100:3100"

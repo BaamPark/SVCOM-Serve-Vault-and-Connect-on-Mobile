@@ -6,8 +6,10 @@ const crypto = require("crypto");
 const { URL } = require("url");
 
 const ROOT_DIR = __dirname;
-const PUBLIC_DIR = path.join(ROOT_DIR, "public");
-const ENV_PATH = path.join(ROOT_DIR, ".env");
+const ENV_PATHS = [
+  path.join(ROOT_DIR, ".env"),
+  path.join(ROOT_DIR, "..", ".env")
+];
 const POLL_INTERVAL_MS = 1200;
 
 function loadEnvFile(filePath) {
@@ -41,7 +43,9 @@ function loadEnvFile(filePath) {
   }
 }
 
-loadEnvFile(ENV_PATH);
+for (const envPath of ENV_PATHS) {
+  loadEnvFile(envPath);
+}
 
 function hashPassword(password) {
   return crypto.createHash("sha256").update(password, "utf8").digest("hex");
@@ -67,12 +71,12 @@ const config = {
 };
 
 if (!config.vaultPath) {
-  console.error("Missing VAULT_PATH. Add it to .env or your shell environment.");
+  console.error("Missing VAULT_PATH. Add it to backend/.env or the root .env.");
   process.exit(1);
 }
 
 if (!config.passwordHash && !config.password) {
-  console.error("Set APP_PASSWORD_HASH or APP_PASSWORD before starting the server.");
+  console.error("Set APP_PASSWORD_HASH or APP_PASSWORD before starting the backend.");
   process.exit(1);
 }
 
@@ -141,12 +145,12 @@ function getSessionToken(req) {
 }
 
 function setCookie(res, name, value, maxAgeSeconds) {
-  const cookie = `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAgeSeconds}`;
+  const cookie = `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}`;
   res.setHeader("Set-Cookie", cookie);
 }
 
 function clearCookie(res, name) {
-  res.setHeader("Set-Cookie", `${name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`);
+  res.setHeader("Set-Cookie", `${name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
 }
 
 function sendJson(res, statusCode, payload) {
@@ -159,9 +163,9 @@ function sendJson(res, statusCode, payload) {
   res.end(body);
 }
 
-function sendText(res, statusCode, body, contentType = "text/plain; charset=utf-8") {
+function sendText(res, statusCode, body) {
   res.writeHead(statusCode, {
-    "Content-Type": contentType,
+    "Content-Type": "text/plain; charset=utf-8",
     "Content-Length": Buffer.byteLength(body),
     "Cache-Control": "no-store"
   });
@@ -235,7 +239,6 @@ function isMarkdownFile(filePath) {
 
 const MIME_TYPES = {
   ".css": "text/css; charset=utf-8",
-  ".html": "text/html; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".png": "image/png",
@@ -267,12 +270,12 @@ function inlineMarkdown(text) {
   result = result.replace(/`([^`]+)`/g, "<code>$1</code>");
   result = result.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, (_, target, label) => {
     const href = encodeURIComponent(target.trim());
-    return `<a href="#" data-note-link="${href}">${htmlEscape(label.trim())}</a>`;
+    return `<a href="/note?path=${href}" data-note-link="${href}">${htmlEscape(label.trim())}</a>`;
   });
   result = result.replace(/\[\[([^\]]+)\]\]/g, (_, target) => {
     const cleanTarget = target.trim();
-    const href = encodeURIComponent(cleanTarget);
-    return `<a href="#" data-note-link="${href}">${htmlEscape(cleanTarget)}</a>`;
+    const href = encodeURIComponent(cleanTarget.endsWith(".md") ? cleanTarget : `${cleanTarget}.md`);
+    return `<a href="/note?path=${href}" data-note-link="${href}">${htmlEscape(cleanTarget)}</a>`;
   });
   result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
   result = result.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
@@ -280,8 +283,150 @@ function inlineMarkdown(text) {
   return result;
 }
 
+function parseFrontmatter(markdown) {
+  const normalized = markdown.replace(/\r/g, "");
+  if (!normalized.startsWith("---\n")) {
+    return {
+      properties: [],
+      body: normalized
+    };
+  }
+
+  const lines = normalized.split("\n");
+  let endIndex = -1;
+  for (let index = 1; index < lines.length; index += 1) {
+    if (lines[index] === "---") {
+      endIndex = index;
+      break;
+    }
+  }
+
+  if (endIndex === -1) {
+    return {
+      properties: [],
+      body: normalized
+    };
+  }
+
+  const properties = [];
+  let currentListProperty = null;
+
+  for (const line of lines.slice(1, endIndex)) {
+    const listMatch = line.match(/^\s*-\s+(.*)$/);
+    if (listMatch && currentListProperty) {
+      currentListProperty.items.push(listMatch[1].trim());
+      continue;
+    }
+
+    const propertyMatch = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (!propertyMatch) {
+      currentListProperty = null;
+      continue;
+    }
+
+    const key = propertyMatch[1].trim();
+    const rawValue = propertyMatch[2];
+    if (rawValue) {
+      properties.push({
+        key,
+        type: "text",
+        value: rawValue.trim()
+      });
+      currentListProperty = null;
+      continue;
+    }
+
+    currentListProperty = {
+      key,
+      type: "list",
+      items: []
+    };
+    properties.push(currentListProperty);
+  }
+
+  const body = lines.slice(endIndex + 1).join("\n").replace(/^\n+/, "");
+  return { properties, body };
+}
+
+function serializeFrontmatter(properties) {
+  if (!Array.isArray(properties) || properties.length === 0) {
+    return "";
+  }
+
+  const lines = ["---"];
+  for (const property of properties) {
+    if (!property?.key) {
+      continue;
+    }
+
+    if (property.type === "list") {
+      lines.push(`${property.key}:`);
+      for (const item of property.items || []) {
+        lines.push(`  - ${String(item ?? "").trim()}`);
+      }
+      continue;
+    }
+
+    lines.push(`${property.key}: ${String(property.value ?? "").trim()}`);
+  }
+  lines.push("---");
+  return `${lines.join("\n")}\n\n`;
+}
+
+function renderPropertiesHtml(properties) {
+  if (!Array.isArray(properties) || properties.length === 0) {
+    return "";
+  }
+
+  const rows = properties
+    .map((property) => {
+      if (property.type === "list") {
+        const chips = (property.items || [])
+          .map((item) => `<span class="property-chip">${inlineMarkdown(String(item ?? ""))}</span>`)
+          .join("");
+        return `<div class="property-row"><div class="property-key">${htmlEscape(property.key)}</div><div class="property-value property-value-list">${chips}</div></div>`;
+      }
+
+      return `<div class="property-row"><div class="property-key">${htmlEscape(property.key)}</div><div class="property-value">${inlineMarkdown(String(property.value ?? ""))}</div></div>`;
+    })
+    .join("");
+
+  return `<section class="note-properties"><div class="note-properties-label">Properties</div><div class="note-properties-card">${rows}</div></section>`;
+}
+
+function flattenPropertiesToLegacyLine(properties) {
+  if (!Array.isArray(properties) || properties.length === 0) {
+    return "";
+  }
+
+  const parts = ["---"];
+  for (const property of properties) {
+    if (!property?.key) {
+      continue;
+    }
+
+    if (property.type === "list") {
+      parts.push(`${property.key}:`);
+      for (const item of property.items || []) {
+        parts.push(`- ${String(item ?? "").trim()}`);
+      }
+      continue;
+    }
+
+    parts.push(`${property.key}: ${String(property.value ?? "").trim()}`);
+  }
+  parts.push("---");
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+}
+
 function markdownToHtml(markdown) {
-  const lines = markdown.replace(/\r/g, "").split("\n");
+  const { properties, body } = parseFrontmatter(markdown);
+  const legacyLine = flattenPropertiesToLegacyLine(properties);
+  const cleanedBody =
+    legacyLine && body.startsWith(legacyLine)
+      ? body.slice(legacyLine.length).replace(/^\s+/, "")
+      : body;
+  const lines = cleanedBody.split("\n");
   const output = [];
   let inList = false;
   let inCodeBlock = false;
@@ -305,11 +450,7 @@ function markdownToHtml(markdown) {
     if (line.startsWith("```")) {
       flushParagraph();
       closeList();
-      if (inCodeBlock) {
-        output.push("</code></pre>");
-      } else {
-        output.push("<pre><code>");
-      }
+      output.push(inCodeBlock ? "</code></pre>" : "<pre><code>");
       inCodeBlock = !inCodeBlock;
       continue;
     }
@@ -363,7 +504,11 @@ function markdownToHtml(markdown) {
     output.push("</code></pre>");
   }
 
-  return output.join("\n");
+  return {
+    properties,
+    bodyHtml: output.join("\n"),
+    html: `${renderPropertiesHtml(properties)}${output.length > 0 ? `\n${output.join("\n")}` : ""}`.trim()
+  };
 }
 
 async function listVaultEntries() {
@@ -379,6 +524,10 @@ async function listVaultEntries() {
     const children = [];
 
     for (const entry of entries) {
+      if (entry.name === ".obsidian" || entry.name === ".git" || entry.name === "node_modules") {
+        continue;
+      }
+
       const absolutePath = path.join(dirPath, entry.name);
       const relativePath = toVaultRelative(absolutePath);
 
@@ -420,6 +569,10 @@ async function getMarkdownFiles() {
   async function walk(dirPath) {
     const entries = await fsp.readdir(dirPath, { withFileTypes: true });
     for (const entry of entries) {
+      if (entry.name === ".obsidian" || entry.name === ".git" || entry.name === "node_modules") {
+        continue;
+      }
+
       const absolutePath = path.join(dirPath, entry.name);
       if (entry.isDirectory()) {
         await walk(absolutePath);
@@ -439,6 +592,10 @@ async function buildVaultSnapshot() {
   async function walk(dirPath) {
     const entries = await fsp.readdir(dirPath, { withFileTypes: true });
     for (const entry of entries) {
+      if (entry.name === ".obsidian" || entry.name === ".git" || entry.name === "node_modules") {
+        continue;
+      }
+
       const absolutePath = path.join(dirPath, entry.name);
       const relativePath = toVaultRelative(absolutePath);
       if (entry.isDirectory()) {
@@ -553,30 +710,6 @@ async function searchNotes(query) {
   return results.slice(0, 50);
 }
 
-function serveStaticFile(req, res, pathname) {
-  const requested = pathname === "/" ? "/index.html" : pathname;
-  const normalized = path.normalize(requested).replace(/^(\.\.[/\\])+/, "");
-  const absolutePath = path.join(PUBLIC_DIR, normalized);
-
-  if (!absolutePath.startsWith(PUBLIC_DIR)) {
-    sendText(res, 403, "Forbidden");
-    return;
-  }
-
-  fs.readFile(absolutePath, (error, data) => {
-    if (error) {
-      sendText(res, 404, "Not found");
-      return;
-    }
-    res.writeHead(200, {
-      "Content-Type": getMimeType(absolutePath),
-      "Content-Length": data.length,
-      "Cache-Control": "no-store"
-    });
-    res.end(data);
-  });
-}
-
 function requireAuth(req, res) {
   const token = getSessionToken(req);
   if (!isSessionValid(token)) {
@@ -589,6 +722,11 @@ function requireAuth(req, res) {
 
 async function handleApi(req, res, requestUrl) {
   const pathname = requestUrl.pathname;
+
+  if (pathname === "/health" && req.method === "GET") {
+    sendJson(res, 200, { ok: true });
+    return;
+  }
 
   if (pathname === "/api/auth/status" && req.method === "GET") {
     sendJson(res, 200, { authenticated: isSessionValid(getSessionToken(req)) });
@@ -606,7 +744,7 @@ async function handleApi(req, res, requestUrl) {
       const token = createSession();
       setCookie(res, "obsidian_session", token, Math.floor(config.sessionTtlMs / 1000));
       sendJson(res, 200, { ok: true });
-    } catch (error) {
+    } catch {
       sendJson(res, 400, { error: "Invalid request body" });
     }
     return;
@@ -643,11 +781,14 @@ async function handleApi(req, res, requestUrl) {
       const { normalized, absolutePath } = resolveVaultPath(notePath);
       const content = await fsp.readFile(absolutePath, "utf8");
       const stats = await fsp.stat(absolutePath);
+      const rendered = markdownToHtml(content);
       sendJson(res, 200, {
         path: normalized,
         name: path.basename(normalized),
         content,
-        html: markdownToHtml(content),
+        html: rendered.html,
+        bodyHtml: rendered.bodyHtml,
+        properties: rendered.properties,
         updatedAt: stats.mtimeMs
       });
     } catch (error) {
@@ -662,10 +803,13 @@ async function handleApi(req, res, requestUrl) {
       const { normalized, absolutePath } = resolveVaultPath(body.path || "");
       const content = String(body.content ?? "");
       await atomicWriteFile(absolutePath, content);
+      const rendered = markdownToHtml(content);
       sendJson(res, 200, {
         ok: true,
         path: normalized,
-        html: markdownToHtml(content),
+        html: rendered.html,
+        bodyHtml: rendered.bodyHtml,
+        properties: rendered.properties,
         updatedAt: Date.now()
       });
     } catch (error) {
@@ -678,8 +822,7 @@ async function handleApi(req, res, requestUrl) {
   if (pathname === "/api/note" && req.method === "POST") {
     try {
       const body = await readJsonBody(req);
-      const notePath = String(body.path || "");
-      const { normalized, absolutePath } = resolveVaultPath(notePath);
+      const { normalized, absolutePath } = resolveVaultPath(String(body.path || ""));
       if (!isMarkdownFile(normalized)) {
         throw new Error("New note path must end with .md");
       }
@@ -805,30 +948,30 @@ async function handleApi(req, res, requestUrl) {
   sendJson(res, 404, { error: "Not found" });
 }
 
-const server = http.createServer(async (req, res) => {
-  try {
-    removeExpiredSessions();
-    const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
-
-    if (requestUrl.pathname.startsWith("/api/")) {
-      await handleApi(req, res, requestUrl);
-      return;
-    }
-
-    serveStaticFile(req, res, requestUrl.pathname);
-  } catch (error) {
-    console.error("Unhandled server error:", error);
-    sendJson(res, 500, { error: "Internal server error" });
-  }
-});
-
 setInterval(() => {
   void pollVaultChanges();
 }, POLL_INTERVAL_MS);
 
 void pollVaultChanges();
 
+const server = http.createServer(async (req, res) => {
+  try {
+    removeExpiredSessions();
+    const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+
+    if (requestUrl.pathname === "/" && req.method === "GET") {
+      sendJson(res, 200, { service: "obsidian-local-web-backend" });
+      return;
+    }
+
+    await handleApi(req, res, requestUrl);
+  } catch (error) {
+    console.error("Unhandled backend error:", error);
+    sendText(res, 500, "Internal server error");
+  }
+});
+
 server.listen(config.port, config.host, () => {
   console.log(`Vault: ${config.vaultPath}`);
-  console.log(`Listening on http://${config.host}:${config.port}`);
+  console.log(`Backend listening on http://${config.host}:${config.port}`);
 });
