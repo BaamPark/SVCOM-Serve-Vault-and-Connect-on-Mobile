@@ -278,6 +278,8 @@ function inlineMarkdown(text) {
     return `<a href="/note?path=${href}" data-note-link="${href}">${htmlEscape(cleanTarget)}</a>`;
   });
   result = result.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+  result = result.replace(/==([^=]+)==/g, "<mark>$1</mark>");
+  result = result.replace(/~~([^~]+)~~/g, "<del>$1</del>");
   result = result.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   result = result.replace(/\*([^*]+)\*/g, "<em>$1</em>");
   return result;

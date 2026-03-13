@@ -54,7 +54,7 @@ function escapeHtml(value) {
 
 function serializeInline(node) {
   if (node.nodeType === Node.TEXT_NODE) {
-    return node.textContent || "";
+    return (node.textContent || "").replace(/\u200b/g, "");
   }
 
   if (node.nodeType !== Node.ELEMENT_NODE) {
@@ -62,6 +62,9 @@ function serializeInline(node) {
   }
 
   const element = node;
+  if (element.hasAttribute?.("data-inline-trigger")) {
+    return "";
+  }
   const text = Array.from(element.childNodes).map(serializeInline).join("");
 
   switch (element.tagName) {
@@ -70,6 +73,12 @@ function serializeInline(node) {
     case "STRONG":
     case "B":
       return `**${text}**`;
+    case "MARK":
+      return `==${text}==`;
+    case "S":
+    case "STRIKE":
+    case "DEL":
+      return `~~${text}~~`;
     case "EM":
     case "I":
       return `*${text}*`;
@@ -377,8 +386,106 @@ function renderInlineMarkdown(text) {
       return `<a href="${safeHref}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`;
     })
     .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+    .replace(/==([^=\n]+)==/g, "<mark>$1</mark>")
+    .replace(/~~([^~\n]+)~~/g, "<del>$1</del>")
     .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s).,!?:;])/g, "$1<em>$2</em>");
+}
+
+function renderMarkdownBodyToHtml(markdown) {
+  const lines = markdown.split("\n");
+  const output = [];
+  let inList = false;
+  let inCodeBlock = false;
+  const paragraphBuffer = [];
+
+  function flushParagraph() {
+    if (paragraphBuffer.length > 0) {
+      output.push(`<p>${renderInlineMarkdown(paragraphBuffer.join(" "))}</p>`);
+      paragraphBuffer.length = 0;
+    }
+  }
+
+  function closeList() {
+    if (inList) {
+      output.push("</ul>");
+      inList = false;
+    }
+  }
+
+  for (const line of lines) {
+    if (line.startsWith("```")) {
+      flushParagraph();
+      closeList();
+      output.push(inCodeBlock ? "</code></pre>" : "<pre><code>");
+      inCodeBlock = !inCodeBlock;
+      continue;
+    }
+
+    if (inCodeBlock) {
+      output.push(`${escapeHtml(line)}\n`);
+      continue;
+    }
+
+    if (!line.trim()) {
+      flushParagraph();
+      closeList();
+      continue;
+    }
+
+    const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      flushParagraph();
+      closeList();
+      const level = headingMatch[1].length;
+      output.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`);
+      continue;
+    }
+
+    const quoteMatch = line.match(/^>\s?(.*)$/);
+    if (quoteMatch) {
+      flushParagraph();
+      closeList();
+      output.push(`<blockquote>${renderInlineMarkdown(quoteMatch[1])}</blockquote>`);
+      continue;
+    }
+
+    const checkboxMatch = line.match(/^[-*]\s+\[( |x|X)\]\s+(.*)$/);
+    if (checkboxMatch) {
+      flushParagraph();
+      if (!inList) {
+        output.push("<ul>");
+        inList = true;
+      }
+      const checked = checkboxMatch[1].toLowerCase() === "x" ? " checked" : "";
+      output.push(
+        `<li class="task-item${checked ? " task-item-checked" : ""}"><input type="checkbox" class="task-checkbox" contenteditable="false"${checked}><span class="task-content${checked ? " task-content-checked" : ""}">${renderInlineMarkdown(checkboxMatch[2])}</span></li>`
+      );
+      continue;
+    }
+
+    const listMatch = line.match(/^[-*]\s+(.*)$/);
+    if (listMatch) {
+      flushParagraph();
+      if (!inList) {
+        output.push("<ul>");
+        inList = true;
+      }
+      output.push(`<li>${renderInlineMarkdown(listMatch[1])}</li>`);
+      continue;
+    }
+
+    closeList();
+    paragraphBuffer.push(line.trim());
+  }
+
+  flushParagraph();
+  closeList();
+  if (inCodeBlock) {
+    output.push("</code></pre>");
+  }
+
+  return output.join("\n");
 }
 
 function markdownPatternPresent(text) {
@@ -486,7 +593,7 @@ function currentBlockElement(rootElement) {
   while (node && node !== rootElement) {
     if (
       node.nodeType === Node.ELEMENT_NODE &&
-      ["P", "DIV", "LI", "H1", "H2", "H3", "BLOCKQUOTE"].includes(node.tagName)
+      ["P", "DIV", "LI", "H1", "H2", "H3", "BLOCKQUOTE", "PRE"].includes(node.tagName)
     ) {
       return node;
     }
@@ -557,140 +664,78 @@ function isEffectivelyEmptyBlock(block) {
   });
 }
 
-function applyMarkdownShortcut(rootElement) {
+function blockHasRenderedInlineMarkdown(block) {
+  if (!block || block.nodeType !== Node.ELEMENT_NODE) {
+    return false;
+  }
+
+  return Boolean(block.querySelector("strong, b, em, i, code, a"));
+}
+
+function createInlineTriggerMarker() {
+  const marker = document.createElement("span");
+  marker.setAttribute("data-inline-trigger", "true");
+  marker.setAttribute("aria-hidden", "true");
+  marker.textContent = "\u200b";
+  return marker;
+}
+
+function selectionAtEndOfBlock(block) {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || !block) {
+    return false;
+  }
+
+  const range = selection.getRangeAt(0);
+  if (!range.collapsed || !block.contains(range.startContainer)) {
+    return false;
+  }
+
+  const endRange = document.createRange();
+  endRange.selectNodeContents(block);
+  endRange.collapse(false);
+  return range.compareBoundaryPoints(Range.START_TO_START, endRange) === 0;
+}
+
+function revertInlineMarkdownTriggerSpace(rootElement) {
+  const block = currentBlockElement(rootElement);
+  if (!block || block.tagName === "PRE") {
+    return false;
+  }
+
+  if (!selectionAtEndOfBlock(block) || !blockHasRenderedInlineMarkdown(block)) {
+    return false;
+  }
+
+  const rawInlineMarkdown = block.getAttribute("data-inline-markdown-raw");
+  if (!rawInlineMarkdown) {
+    return false;
+  }
+
+  block.textContent = rawInlineMarkdown;
+  block.removeAttribute("data-inline-markdown-raw");
+  placeCaretAtEnd(block);
+  return true;
+}
+
+function applyMarkdownShortcut(rootElement, options = {}) {
+  const { allowInline = true } = options;
   const block = currentBlockElement(rootElement);
   if (!block) {
     return false;
   }
 
   const text = block.textContent || "";
-  const parent = block.parentNode;
-  if (!parent) {
-    return false;
-  }
 
-  if (block.tagName === "LI" && !block.querySelector('input[type="checkbox"]')) {
-    const nestedCheckboxMatch = text.match(/^\[( |x|X)\]\s*(.*)$/);
-    if (nestedCheckboxMatch) {
-      const taskItem = createTaskListItem(
-        nestedCheckboxMatch[1].toLowerCase() === "x",
-        renderInlineMarkdown(nestedCheckboxMatch[2] || "")
-      );
-      parent.replaceChild(taskItem, block);
-      normalizeLinkTargets(taskItem);
-      placeCaretInsideTaskContent(taskItem);
-      return true;
-    }
-  }
-
-  const bulletMatch = text.match(/^[-*]\s+(.*)$/);
-  if (text === "- " || text === "* " || bulletMatch) {
-    const list = document.createElement("ul");
-    const item = document.createElement("li");
-    const itemText = bulletMatch?.[1] || "";
-    if (itemText) {
-      item.textContent = itemText;
+  if (allowInline && markdownPatternPresent(text) && block.tagName !== "PRE") {
+    const inlineSource = text.endsWith(" ") ? text.slice(0, -1) : text;
+    block.innerHTML = renderInlineMarkdown(inlineSource);
+    if (text.endsWith(" ")) {
+      block.setAttribute("data-inline-markdown-raw", inlineSource);
+      block.appendChild(createInlineTriggerMarker());
     } else {
-      item.appendChild(document.createElement("br"));
+      block.removeAttribute("data-inline-markdown-raw");
     }
-    list.appendChild(item);
-    parent.replaceChild(list, block);
-    if (itemText) {
-      placeCaretAtEnd(item);
-    } else {
-      placeCaretAtStart(item);
-    }
-    return true;
-  }
-
-  const checkboxMatch = text.match(/^-\s\[( |x)\]\s+(.*)$/i);
-  if (checkboxMatch) {
-    const list = document.createElement("ul");
-    const item = createTaskListItem(
-      checkboxMatch[1].toLowerCase() === "x",
-      renderInlineMarkdown(checkboxMatch[2] || "")
-    );
-    list.appendChild(item);
-    parent.replaceChild(list, block);
-    placeCaretAtEnd(item);
-    normalizeLinkTargets(item);
-    return true;
-  }
-
-  const quoteMatch = text.match(/^>\s+(.*)$/);
-  if (text === "> " || quoteMatch) {
-    const quote = document.createElement("blockquote");
-    const quoteText = quoteMatch?.[1] || "";
-    if (quoteText) {
-      quote.textContent = quoteText;
-    } else {
-      quote.appendChild(document.createElement("br"));
-    }
-    parent.replaceChild(quote, block);
-    if (quoteText) {
-      placeCaretAtEnd(quote);
-    } else {
-      placeCaretAtStart(quote);
-    }
-    return true;
-  }
-
-  const orderedMatch = text.match(/^\d+\.\s+(.*)$/);
-  if (orderedMatch) {
-    const list = document.createElement("ol");
-    const item = document.createElement("li");
-    const itemText = orderedMatch[1] || "";
-    if (itemText) {
-      item.innerHTML = renderInlineMarkdown(itemText);
-    } else {
-      item.appendChild(document.createElement("br"));
-    }
-    list.appendChild(item);
-    parent.replaceChild(list, block);
-    normalizeLinkTargets(item);
-    if (itemText) {
-      placeCaretAtEnd(item);
-    } else {
-      placeCaretAtStart(item);
-    }
-    return true;
-  }
-
-  const headingMatch = text.match(/^(#{1,3})\s+(.*)$/) || text.match(/^(#{1,3}) $/);
-  if (headingMatch) {
-    const level = headingMatch[1].length;
-    const heading = document.createElement(`h${level}`);
-    const headingText = headingMatch[2] || "";
-    if (headingText) {
-      heading.textContent = headingText;
-    } else {
-      heading.appendChild(document.createElement("br"));
-    }
-    parent.replaceChild(heading, block);
-    if (headingText) {
-      placeCaretAtEnd(heading);
-    } else {
-      placeCaretAtStart(heading);
-    }
-    return true;
-  }
-
-  const fenceMatch = text.match(/^```([\w-]+)?$/);
-  if (fenceMatch) {
-    const pre = document.createElement("pre");
-    const code = document.createElement("code");
-    if (fenceMatch[1]) {
-      code.setAttribute("data-language", fenceMatch[1]);
-    }
-    code.appendChild(document.createElement("br"));
-    pre.appendChild(code);
-    parent.replaceChild(pre, block);
-    placeCaretAtStart(code);
-    return true;
-  }
-
-  if (markdownPatternPresent(text) && block.tagName !== "PRE") {
-    block.innerHTML = renderInlineMarkdown(text);
     normalizeLinkTargets(block);
     placeCaretAtEnd(block);
     return true;
@@ -715,7 +760,7 @@ function revertStructuredBlockToMarkdown(rootElement) {
     } else if (list?.tagName === "OL") {
       paragraph.textContent = "1. ";
     } else {
-      paragraph.textContent = "- ";
+      paragraph.appendChild(document.createElement("br"));
     }
 
     if (list && list.children.length === 1 && list.parentNode) {
@@ -869,6 +914,44 @@ export default function NotePage() {
     }
 
     return range;
+  }
+
+  function wrapSelectionWithInlineTag(tagName) {
+    if (editorMode !== "visual") {
+      return false;
+    }
+    if (!ensureEditorSelection()) {
+      setFloatingToolsOpen(false);
+      return false;
+    }
+
+    const range = currentEditorRange();
+    if (!range || range.collapsed) {
+      setFloatingToolsOpen(false);
+      return false;
+    }
+
+    const wrapper = document.createElement(tagName);
+    const contents = range.extractContents();
+    wrapper.appendChild(contents);
+    range.insertNode(wrapper);
+
+    const spacer = document.createTextNode("\u200b");
+    wrapper.parentNode.insertBefore(spacer, wrapper.nextSibling);
+
+    const selection = window.getSelection();
+    if (selection) {
+      const nextRange = document.createRange();
+      nextRange.setStart(spacer, spacer.textContent.length);
+      nextRange.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(nextRange);
+      saveEditorSelection();
+    }
+
+    handleVisualInput();
+    setFloatingToolsOpen(false);
+    return true;
   }
 
   function selectNodeContents(node) {
@@ -1155,6 +1238,7 @@ export default function NotePage() {
     if (editorMode === "visual" && visualEditorRef.current) {
       const nextBodyMarkdown = htmlToMarkdown(visualEditorRef.current);
       const nextMarkdown = composeNoteMarkdown(properties, nextBodyMarkdown);
+      setVisualHtml(visualEditorRef.current.innerHTML);
       setMarkdownContent(nextBodyMarkdown);
       setRawMarkdownContent(nextMarkdown);
       if (dirtyRef.current) {
@@ -1170,6 +1254,7 @@ export default function NotePage() {
       const parsed = parseFrontmatter(rawMarkdownContent);
       setMarkdownContent(parsed.body);
       setProperties(parsed.properties);
+      setVisualHtml(renderMarkdownBodyToHtml(parsed.body));
     }
 
     if (nextMode === "markdown") {
@@ -1183,17 +1268,7 @@ export default function NotePage() {
     if (!visualEditorRef.current) {
       return;
     }
-    if (revertStructuredBlockToMarkdown(visualEditorRef.current)) {
-      dirtyRef.current = true;
-      setStatus("Editing...");
-      const nextBody = htmlToMarkdown(visualEditorRef.current);
-      setMarkdownContent(nextBody);
-      setRawMarkdownContent(composeNoteMarkdown(properties, nextBody));
-      setSaveRevision((value) => value + 1);
-      saveEditorSelection();
-      return;
-    }
-    applyMarkdownShortcut(visualEditorRef.current);
+    applyMarkdownShortcut(visualEditorRef.current, { allowInline: false });
     dirtyRef.current = true;
     setStatus("Editing...");
     const nextBody = htmlToMarkdown(visualEditorRef.current);
@@ -1223,6 +1298,55 @@ export default function NotePage() {
     }
 
     if (event.key === "Enter") {
+      const currentBlock = currentBlockElement(visualEditorRef.current);
+      if (currentBlock?.tagName === "PRE" && currentBlock.parentNode) {
+        event.preventDefault();
+        const paragraph = document.createElement("p");
+        paragraph.appendChild(document.createElement("br"));
+        currentBlock.insertAdjacentElement("afterend", paragraph);
+        placeCaretAtStart(paragraph);
+        handleVisualInput();
+        return;
+      }
+
+      if (
+        currentBlock &&
+        ["H1", "H2", "H3"].includes(currentBlock.tagName) &&
+        currentBlock.parentNode
+      ) {
+        event.preventDefault();
+        const paragraph = document.createElement("p");
+        paragraph.appendChild(document.createElement("br"));
+        currentBlock.insertAdjacentElement("afterend", paragraph);
+        placeCaretAtStart(paragraph);
+        handleVisualInput();
+        return;
+      }
+
+      if (currentBlock?.tagName === "BLOCKQUOTE" && currentBlock.parentNode) {
+        event.preventDefault();
+        const paragraph = document.createElement("p");
+        paragraph.appendChild(document.createElement("br"));
+        currentBlock.insertAdjacentElement("afterend", paragraph);
+        placeCaretAtStart(paragraph);
+        handleVisualInput();
+        return;
+      }
+
+      if (
+        currentBlock?.tagName === "LI" &&
+        !currentBlock.querySelector('input[type="checkbox"]') &&
+        currentBlock.parentNode
+      ) {
+        event.preventDefault();
+        const nextItem = document.createElement("li");
+        nextItem.appendChild(document.createElement("br"));
+        currentBlock.insertAdjacentElement("afterend", nextItem);
+        placeCaretAtStart(nextItem);
+        handleVisualInput();
+        return;
+      }
+
       const taskItem = currentTaskItem(visualEditorRef.current);
       if (taskItem) {
         event.preventDefault();
@@ -1242,6 +1366,12 @@ export default function NotePage() {
 
   function handleVisualBeforeInput(event) {
     if (event.inputType !== "deleteContentBackward" || !visualEditorRef.current) {
+      return;
+    }
+
+    if (revertInlineMarkdownTriggerSpace(visualEditorRef.current)) {
+      event.preventDefault();
+      handleVisualInput();
       return;
     }
 
@@ -1270,7 +1400,74 @@ export default function NotePage() {
       setFloatingToolsOpen(false);
       return;
     }
+    const range = currentEditorRange();
+    if (!range || range.collapsed) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+    if (command === "bold") {
+      wrapSelectionWithInlineTag("strong");
+      return;
+    }
+    if (command === "highlight") {
+      wrapSelectionWithInlineTag("mark");
+      return;
+    }
+    if (command === "strikeThrough") {
+      wrapSelectionWithInlineTag("del");
+      return;
+    }
+    if (command === "italic") {
+      wrapSelectionWithInlineTag("em");
+      return;
+    }
     document.execCommand(command, false, value);
+    handleVisualInput();
+    setFloatingToolsOpen(false);
+  }
+
+  function applyHeadingCommand(level) {
+    if (editorMode !== "visual") {
+      return;
+    }
+    if (!ensureEditorSelection()) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const range = currentEditorRange();
+    if (!range) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    if (range.collapsed) {
+      const editor = visualEditorRef.current;
+      const currentBlock = currentBlockElement(editor);
+      const heading = document.createElement(`h${level}`);
+      heading.appendChild(document.createElement("br"));
+
+      if (currentBlock?.parentNode) {
+        if (!isEffectivelyEmptyBlock(currentBlock)) {
+          setFloatingToolsOpen(false);
+          return;
+        }
+        currentBlock.parentNode.replaceChild(heading, currentBlock);
+      } else if (editor) {
+        editor.innerHTML = "";
+        editor.appendChild(heading);
+      } else {
+        setFloatingToolsOpen(false);
+        return;
+      }
+
+      placeCaretAtStart(heading);
+      handleVisualInput();
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    document.execCommand("formatBlock", false, `<h${level}>`);
     handleVisualInput();
     setFloatingToolsOpen(false);
   }
@@ -1414,30 +1611,67 @@ export default function NotePage() {
       return;
     }
     const range = currentEditorRange();
-    if (!range) {
+    if (!range || range.collapsed) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+    wrapSelectionWithInlineTag("code");
+  }
+
+  function insertBullet() {
+    if (editorMode !== "visual" || !visualEditorRef.current) {
+      return;
+    }
+    if (!ensureEditorSelection()) {
       setFloatingToolsOpen(false);
       return;
     }
 
-    const code = document.createElement("code");
-    if (range.collapsed) {
-      code.textContent = "\u200b";
-      range.insertNode(code);
-      selectNodeContents(code);
+    const editor = visualEditorRef.current;
+    const range = currentEditorRange();
+    const currentBlock = currentBlockElement(editor);
+    const list = document.createElement("ul");
+    const item = document.createElement("li");
+    item.appendChild(document.createElement("br"));
+    list.appendChild(item);
+
+    if (currentBlock?.parentNode) {
+      currentBlock.parentNode.replaceChild(list, currentBlock);
     } else {
-      const contents = range.extractContents();
-      code.appendChild(contents);
-      range.insertNode(code);
-      const selection = window.getSelection();
-      if (selection) {
-        const nextRange = document.createRange();
-        nextRange.selectNodeContents(code);
-        selection.removeAllRanges();
-        selection.addRange(nextRange);
-        saveEditorSelection();
-      }
+      editor.innerHTML = "";
+      editor.appendChild(list);
     }
-    handleVisualInput();
+
+    placeCaretAtStart(item);
+    handleVisualInput({ skipRevert: true });
+    setFloatingToolsOpen(false);
+  }
+
+  function insertOrderedList() {
+    if (editorMode !== "visual" || !visualEditorRef.current) {
+      return;
+    }
+    if (!ensureEditorSelection()) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const editor = visualEditorRef.current;
+    const currentBlock = currentBlockElement(editor);
+    const list = document.createElement("ol");
+    const item = document.createElement("li");
+    item.appendChild(document.createElement("br"));
+    list.appendChild(item);
+
+    if (currentBlock?.parentNode) {
+      currentBlock.parentNode.replaceChild(list, currentBlock);
+    } else {
+      editor.innerHTML = "";
+      editor.appendChild(list);
+    }
+
+    placeCaretAtStart(item);
+    handleVisualInput({ skipRevert: true });
     setFloatingToolsOpen(false);
   }
 
@@ -1449,7 +1683,33 @@ export default function NotePage() {
       setFloatingToolsOpen(false);
       return;
     }
-    document.execCommand("insertHTML", false, "<pre><code><br></code></pre>");
+
+    const range = currentEditorRange();
+    if (!range || range.collapsed) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const selectedText = range.toString();
+    const currentBlock = currentBlockElement(visualEditorRef.current);
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    code.textContent = selectedText;
+    pre.appendChild(code);
+
+    const paragraph = document.createElement("p");
+    paragraph.appendChild(document.createElement("br"));
+
+    if (currentBlock?.parentNode) {
+      currentBlock.parentNode.replaceChild(pre, currentBlock);
+      pre.insertAdjacentElement("afterend", paragraph);
+    } else {
+      range.deleteContents();
+      range.insertNode(pre);
+      pre.insertAdjacentElement("afterend", paragraph);
+    }
+
+    placeCaretAtStart(paragraph);
     handleVisualInput();
     setFloatingToolsOpen(false);
   }
@@ -1464,9 +1724,17 @@ export default function NotePage() {
       return;
     }
 
+    const range = currentEditorRange();
+    if (!range && !editor) {
+      setFloatingToolsOpen(false);
+      return;
+    }
+
+    const selectedText = range.toString().trim();
+
     const taskItem = currentTaskItem(editor);
     if (taskItem) {
-      const nextTaskItem = createTaskListItem(false, "task");
+      const nextTaskItem = createTaskListItem(false, renderInlineMarkdown(selectedText || ""));
       taskItem.insertAdjacentElement("afterend", nextTaskItem);
       placeCaretInsideTaskContent(nextTaskItem);
       handleVisualInput();
@@ -1476,23 +1744,20 @@ export default function NotePage() {
 
     const currentBlock = currentBlockElement(editor);
     const list = document.createElement("ul");
-    const item = createTaskListItem(false, "task");
+    const itemHtml = selectedText
+      ? renderInlineMarkdown(selectedText)
+      : currentBlock?.innerHTML || "<br>";
+    const item = createTaskListItem(false, itemHtml);
     list.appendChild(item);
 
     if (currentBlock && currentBlock.parentNode) {
-      const blockText = (currentBlock.textContent || "").trim();
-      const isEmptyParagraph =
-        ["P", "DIV"].includes(currentBlock.tagName) && blockText === "";
-
-      if (isEmptyParagraph) {
-        currentBlock.parentNode.replaceChild(list, currentBlock);
-      } else {
-        currentBlock.insertAdjacentElement("afterend", list);
-      }
+      currentBlock.parentNode.replaceChild(list, currentBlock);
     } else {
+      editor.innerHTML = "";
       editor.appendChild(list);
     }
 
+    normalizeLinkTargets(item);
     placeCaretInsideTaskContent(item);
     handleVisualInput();
     setFloatingToolsOpen(false);
@@ -1533,10 +1798,14 @@ export default function NotePage() {
   const floatingPosition = floatingButtonPosition();
   const displayFloatingCorner = floatingToolsCorner;
   const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 390;
-  const panelWidth = Math.min(192, viewportWidth - 32);
-  const floatingPanelLeft = displayFloatingCorner.endsWith("left")
+  const panelWidth = Math.min(Math.max(240, viewportWidth - 32), 448);
+  const desiredFloatingPanelLeft = displayFloatingCorner.endsWith("left")
     ? floatingPosition.left
-    : Math.max(16, floatingPosition.left + floatingButtonSize - panelWidth);
+    : floatingPosition.left + floatingButtonSize - panelWidth;
+  const floatingPanelLeft = Math.min(
+    Math.max(16, desiredFloatingPanelLeft),
+    Math.max(16, viewportWidth - panelWidth - 16)
+  );
   const floatingPanelTop = (keyboardInset > 0 && cursorAlignedY !== null) || displayFloatingCorner.startsWith("bottom")
     ? Math.max(16, floatingPosition.top - 12 - 80)
     : floatingPosition.top + floatingButtonSize + 12;
@@ -1652,38 +1921,50 @@ export default function NotePage() {
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={(event) => event.stopPropagation()}
               >
-                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={() => runHistoryCommand("undo")}>
-                  Undo
+                <button type="button" className="toolbar-button" aria-label="List" title="List" onPointerDown={handleToolbarPointerDown} onClick={insertBullet}>
+                  •
                 </button>
-                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={() => runHistoryCommand("redo")}>
-                  Redo
+                <button type="button" className="toolbar-button" aria-label="Ordered list" title="Ordered list" onPointerDown={handleToolbarPointerDown} onClick={insertOrderedList}>
+                  <span style={{ fontFamily: "Georgia, 'Times New Roman', serif", fontWeight: 700 }}>1</span>
                 </button>
-                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("formatBlock", "<h1>")}>
+                <button type="button" className="toolbar-button" aria-label="Checkbox" title="Checkbox" onPointerDown={handleToolbarPointerDown} onClick={insertCheckbox}>
+                  ✅
+                </button>
+                <button type="button" className="toolbar-button" aria-label="Bold" title="Bold" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("bold")}>
+                  <span style={{ fontWeight: 700 }}>B</span>
+                </button>
+                <button type="button" className="toolbar-button" aria-label="Highlight" title="Highlight" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("highlight")}>
+                  🖍️
+                </button>
+                <button type="button" className="toolbar-button" aria-label="Strikethrough" title="Strikethrough" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("strikeThrough")}>
+                  <span style={{ textDecoration: "line-through", fontWeight: 700 }}>S</span>
+                </button>
+                <button type="button" className="toolbar-button" aria-label="Italic" title="Italic" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("italic")}>
+                  <span style={{ fontStyle: "italic", fontFamily: "Georgia, 'Times New Roman', serif" }}>I</span>
+                </button>
+                <button type="button" className="toolbar-button" aria-label="Code" title="Code" onPointerDown={handleToolbarPointerDown} onClick={insertInlineCode}>
+                  {"</>"}
+                </button>
+                <button type="button" className="toolbar-button" aria-label="Quote" title="Quote" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("formatBlock", "<blockquote>")}>
+                  ❞
+                </button>
+                <button type="button" className="toolbar-button" aria-label="Heading 1" title="Heading 1" onPointerDown={handleToolbarPointerDown} onClick={() => applyHeadingCommand(1)}>
                   H1
                 </button>
-                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("formatBlock", "<h2>")}>
+                <button type="button" className="toolbar-button" aria-label="Heading 2" title="Heading 2" onPointerDown={handleToolbarPointerDown} onClick={() => applyHeadingCommand(2)}>
                   H2
                 </button>
-                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("bold")}>
-                  B
+                <button type="button" className="toolbar-button" aria-label="Heading 3" title="Heading 3" onPointerDown={handleToolbarPointerDown} onClick={() => applyHeadingCommand(3)}>
+                  H3
                 </button>
-                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("italic")}>
-                  I
+                <button type="button" className="toolbar-button" aria-label="Undo" title="Undo" onPointerDown={handleToolbarPointerDown} onClick={() => runHistoryCommand("undo")}>
+                  ↩
                 </button>
-                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={insertInlineCode}>
-                  Code
+                <button type="button" className="toolbar-button" aria-label="Redo" title="Redo" onPointerDown={handleToolbarPointerDown} onClick={() => runHistoryCommand("redo")}>
+                  ↪
                 </button>
-                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={insertCodeBlock}>
-                  Block
-                </button>
-                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={insertCheckbox}>
-                  Check
-                </button>
-                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("insertUnorderedList")}>
-                  List
-                </button>
-                <button type="button" className="toolbar-button" onPointerDown={handleToolbarPointerDown} onClick={() => applyCommand("formatBlock", "<blockquote>")}>
-                  Quote
+                <button type="button" className="toolbar-button" aria-label="Block" title="Block" onPointerDown={handleToolbarPointerDown} onClick={insertCodeBlock} style={{ display: "none" }}>
+                  🧱
                 </button>
               </aside>
             ) : null}
