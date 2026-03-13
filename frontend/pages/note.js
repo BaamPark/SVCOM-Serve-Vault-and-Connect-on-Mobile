@@ -216,7 +216,7 @@ function normalizeLinkTargets(rootElement) {
 }
 
 function normalizeInlineCaretBoundaries(rootElement) {
-  const inlineSelector = "strong, b, em, i, mark, del, s, strike, a, code";
+  const inlineSelector = "strong, b, em, i, mark, del, s, strike, a, code, .obsidian-tag";
   rootElement.querySelectorAll(inlineSelector).forEach((element) => {
     if (element.tagName === "CODE" && element.closest("pre")) {
       return;
@@ -239,7 +239,10 @@ function isInlineFormattingElement(element) {
   return Boolean(
     element &&
     element.nodeType === Node.ELEMENT_NODE &&
-    ["STRONG", "B", "EM", "I", "MARK", "DEL", "S", "STRIKE", "A", "CODE"].includes(element.tagName) &&
+    (
+      ["STRONG", "B", "EM", "I", "MARK", "DEL", "S", "STRIKE", "A", "CODE"].includes(element.tagName) ||
+      element.classList?.contains("obsidian-tag")
+    ) &&
     !(element.tagName === "CODE" && element.closest("pre"))
   );
 }
@@ -503,6 +506,7 @@ function formatPropertyValue(value) {
 
 function renderInlineMarkdown(text) {
   return escapeHtml(text)
+    .replace(/(^|[\s(])#([A-Za-z0-9_/-]+)/g, '$1<span class="obsidian-tag">#$2</span>')
     .replace(/\[\[([^\]]+)\]\]/g, (_, target) => {
       const trimmed = target.trim();
       return `<a data-note-link="${encodeURIComponent(trimmed)}">${escapeHtml(trimmed)}</a>`;
@@ -1165,7 +1169,10 @@ export default function NotePage() {
     while (current && current !== editor) {
       if (
         current.nodeType === Node.ELEMENT_NODE &&
-        ["STRONG", "B", "EM", "I", "MARK", "DEL", "S", "STRIKE", "CODE", "A"].includes(current.tagName) &&
+        (
+          ["STRONG", "B", "EM", "I", "MARK", "DEL", "S", "STRIKE", "CODE", "A"].includes(current.tagName) ||
+          current.classList?.contains("obsidian-tag")
+        ) &&
         !(current.tagName === "CODE" && current.closest("pre"))
       ) {
         return current;

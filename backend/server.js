@@ -267,6 +267,7 @@ function htmlEscape(value) {
 
 function inlineMarkdown(text) {
   let result = htmlEscape(text);
+  result = result.replace(/(^|[\s(])#([A-Za-z0-9_/-]+)/g, '$1<span class="obsidian-tag">#$2</span>');
   result = result.replace(/`([^`]+)`/g, "<code>$1</code>");
   result = result.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, (_, target, label) => {
     const href = encodeURIComponent(target.trim());
