@@ -686,7 +686,7 @@ function renderMarkdownBodyToHtml(markdown) {
       continue;
     }
 
-    const listMatch = line.match(/^[-*]\s+(.*)$/);
+    const listMatch = line.match(/^[-*+]\s+(.*)$/);
     if (listMatch) {
       flushParagraph();
       if (!inList) {
